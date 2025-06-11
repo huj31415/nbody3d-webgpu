@@ -1,5 +1,29 @@
 // point renderer from webgpufundamentals, added camera controls
 
+
+Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
+Number.prototype.toRad = function () { return this * Math.PI / 180; }
+Number.prototype.toDeg = function () { return this / Math.PI * 180; }
+
+// camera state
+const camera = {
+  // spherical coords around target:
+  target: vec3.fromValues(0, 0, 0),
+  radius: 2,
+  azimuth: 0,               // horizontal angle, radians
+  elevation: 0,             // vertical angle, radians
+  // for projection:
+  fov: (60).toRad(),
+  near: 0.1,
+  far: 100,
+  viewDir: () => vec3.normalize(vec3.subtract(camera.target, camera.position)),
+  viewRight: () => vec3.normalize(vec3.cross(camera.viewDir(), worldUp)),
+  viewUp: () => vec3.normalize(vec3.cross(camera.viewRight(), camera.viewDir())),
+};
+
+// world up vector
+const worldUp = vec3.fromValues(0, 1, 0);
+
 function createPoints({
   numSamples,
   radius,
@@ -11,11 +35,68 @@ function createPoints({
     const y = ((i * offset) - 1) + (offset / 2);
     const r = Math.sqrt(1 - Math.pow(y, 2));
     const phi = (i % numSamples) * increment;
-    const x = Math.cos(phi) * r * Math.random();
-    const z = Math.sin(phi) * r * Math.random();
+    const x = Math.cos(phi) * r;// * Math.random();
+    const z = Math.sin(phi) * r;// * Math.random();
     vertices.push(x * radius, y * radius, z * radius);
+
   }
   return new Float32Array(vertices);
+}
+
+/**
+ * Generates N random points uniformly distributed inside
+ * the disk of given radius, centered at `center`, whose
+ * plane is oriented by `normal`.
+ *
+ * @param {Float32Array|Array<number>} center  A length-3 array [cx,cy,cz]
+ * @param {Float32Array|Array<number>} normal  A length-3 array [nx,ny,nz] (need not be unit)
+ * @param {number} radius                     Disk radius
+ * @param {number} count                      Number of points
+ * @returns {Float32Array}                    Packed [x,y,z, x,y,z, ...]
+ */
+function randomPointsInDisk(center, normal, radius, count) {
+  const out = new Float32Array(count * 3);
+
+  // 1) normalize the normal
+  const n = vec3.normalize(normal);
+
+  // 2) build an orthonormal basis {u,v} for the disk plane
+  //    choose any vector not parallel to n:
+  const tmp = Math.abs(n[0]) > 0.9
+    ? vec3.fromValues(0, 1, 0)
+    : vec3.fromValues(1, 0, 0);
+
+  const u = vec3.normalize(
+    vec3.create(),
+    vec3.cross(tmp, n)
+  );
+  const v = vec3.cross(n, u);
+
+  // 3) sample points
+  for (let i = 0; i < count; i++) {
+    // random radius is proportional sqrt(U) for uniform distribution
+    const t = Math.random();
+    const r = t * Math.sqrt(t) * radius;
+    // random angle
+    const theta = Math.random() * 2 * Math.PI;
+
+    // local offset = u*(r*cos theta) + v*(r*sin theta)
+    const ux = u[0] * (r * Math.cos(theta));
+    const uy = u[1] * (r * Math.cos(theta));
+    const uz = u[2] * (r * Math.cos(theta));
+
+    const vx = v[0] * (r * Math.sin(theta));
+    const vy = v[1] * (r * Math.sin(theta));
+    const vz = v[2] * (r * Math.sin(theta));
+
+    // world position = center + offset_u + offset_v
+    const idx = i * 3;
+    out[idx + 0] = center[0] + ux + vx;
+    out[idx + 1] = center[1] + uy + vy;
+    out[idx + 2] = center[2] + uz + vz;
+  }
+
+  return out;
 }
 
 let adapter, device;
@@ -127,10 +208,11 @@ async function main() {
     },
   });
 
-  const vertexData = createPoints({
-    radius: 1,
-    numSamples: 2000,
-  });
+  const vertexData = //randomPointsInDisk([0,0,0], [1,3,2], 2, 10000000);
+    createPoints({
+      radius: 1,
+      numSamples: 1000,
+    });
   const kNumPoints = vertexData.length / 3;
 
   const vertexBuffer = device.createBuffer({
@@ -174,28 +256,6 @@ async function main() {
     ],
   };
 
-  Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
-  Number.prototype.toRad = function () { return this * Math.PI / 180; }
-  Number.prototype.toDeg = function () { return this / Math.PI * 180; }
-
-  // camera state
-  const camera = {
-    // spherical coords around target:
-    target: vec3.fromValues(0, 0, 0),
-    radius: 2,
-    azimuth: 0,               // horizontal angle, radians
-    elevation: 0,             // vertical angle, radians
-    // for projection:
-    fov: (60).toRad(),
-    near: 0.1,
-    far: 100,
-    viewDir: () => vec3.normalize(vec3.subtract(camera.target, camera.position)),
-    viewRight: () => vec3.normalize(vec3.cross(camera.viewDir(), worldUp)),
-    viewUp: () => vec3.normalize(vec3.cross(camera.viewRight(), camera.viewDir())),
-  };
-
-  const worldUp = vec3.fromValues(0, 1, 0);
-
   // compute position from spherical coords
   function updateCameraPosition() {
     const { azimuth: phi, elevation: theta, radius: r, target: T } = camera;
@@ -219,6 +279,7 @@ async function main() {
 
   canvas.addEventListener('mousedown', e => {
     if (e.button === 0) state.orbitActive = true; // left click to orbit
+    if (e.button === 1) resetCam();
     if (e.button === 2) state.panActive = true;   // right click to pan
     state.lastX = e.clientX;
     state.lastY = e.clientY;
@@ -265,14 +326,32 @@ async function main() {
       camera.radius = initial / Math.tan(camera.fov / 2);
     } else {
       // move camera in/out
-      camera.radius = (camera.radius + e.deltaY * ZOOM_SPEED).clamp(0.1, 100);
+      camera.radius = (camera.radius + e.deltaY * ZOOM_SPEED).clamp(camera.near, camera.far);
     }
     updateCameraPosition();
   }, { passive: false });
 
+  function resetCam() {
+    camera.target = vec3.fromValues(0, 0, 0);
+    camera.radius = 2;
+    camera.azimuth = 0;
+    camera.elevation = 0;
+    camera.fov = (60).toRad();
+    updateCameraPosition();
+  }
+
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Alt") e.preventDefault();
+    switch (e.key) {
+      case "Alt":
+        e.preventDefault();
+        break;
+      case "Home":
+        resetCam();
+        break;
+    }
   });
+
+  let rafId;
 
   function render(time) {
     const canvasTexture = context.getCurrentTexture();
@@ -308,10 +387,15 @@ async function main() {
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
 
-    requestAnimationFrame(render);
+    rafId = requestAnimationFrame(render);
   }
 
-  requestAnimationFrame(render);
+  rafId = requestAnimationFrame(render);
+
+  window.onresize = () => {
+    cancelAnimationFrame(rafId);
+    main();
+  };
 }
 
 function fail(msg) {
