@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>2D Wave Simulation on WebGPU</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+
+<body>
+  <canvas id="canvas"></canvas>
+  <!-- undo hide when ready -->
+  <button id="toggleSettings" class="hidden">&gt;</button>
+  <div id="controls" class="right-dark hidden">
+    <h2>3D n-body on WebGPU</h2>
+    FPS: <span id="fps"></span>
+    Frame time: <span id="frameTime"></span> ms
+    <br>
+    JS time: <span id="jsTime"></span> ms
+    <div class="control-group">
+      <div>
+        <select id="visualization">
+          <option value="wave">Wave</option>
+          <option value="speed">Speed</option>
+          <option value="end">End screen intensity</option>
+        </select>
+        <label for="visualization">Visualization mode</label>
+      </div>
+      <div>
+        <input id="dt" type="range" min="0.01" max="0.7" step="0.01" value="0.2">
+        <label for="dt">dt &lt;1/(c&radic;2):
+          <span id="dtValue">0.2</span>
+        </label>
+        <br>
+        <input id="simSpeed" type="range" min="0" max="100" step="1" value="10">
+        <label for="simSpeed">dt/frame:
+          <span id="simSpeedValue">10</span>
+        </label>
+      </div>
+      <button id="reinit" class="fullwidth">Restart sim</button>
+    </div>
+    <hr>
+    <div class="control-group" id="presetSettings">
+      <div>
+        <select id="preset">
+          <option value="1">1</option>
+        </select>
+        <label for="preset">Preset</label>
+      </div>
+    </div>
+    <p></p>
+  </div>
+  <script src="./util.js"></script>
+  <script src="./nbody3d.js"></script>
+</body>
+
+</html>
