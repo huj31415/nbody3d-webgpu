@@ -182,6 +182,7 @@ async function main() {
 
       struct VSOutput {
         @builtin(position) position: vec4f,
+        @location(0) uv: vec2f,
       };
 
       @group(0) @binding(0) var<storage, read> bodies: array<Body>;
@@ -206,6 +207,7 @@ async function main() {
         // ensure points are at least 2px wide, get radius from mass (r = cbrt(mass * 3/4 / pi))
         let pointPos = vec4f(pos / uni.resolution * 2 * max(clipPos.w, pow(body.mass * 0.239, 0.333333)), 0, 0);
         vsOut.position = clipPos + pointPos;
+        vsOut.uv = pos;
         return vsOut;
       }
 
@@ -214,7 +216,12 @@ async function main() {
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        return vec4f(colorMap(vsOut.position.w), 1);
+        const innerRadius = 0.9;
+        const outerRadius = 1;
+        let distance = length(vsOut.uv);
+        let alpha = 1.0 - smoothstep(innerRadius, outerRadius, distance);
+        if (alpha < 0.5) {discard;}
+        return vec4f(colorMap(vsOut.position.w) * alpha, alpha);
       }
     `,
   });
@@ -412,7 +419,7 @@ async function main() {
 
   let rafId;
   let depthTexture;
-  
+
   function render(time) {
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
