@@ -1,36 +1,8 @@
 // point renderer from webgpufundamentals, added camera controls
 
-
-Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
-Number.prototype.toRad = function () { return this * Math.PI / 180; }
-Number.prototype.toDeg = function () { return this / Math.PI * 180; }
-
 let adapter, device;
 
-const ROT_SPEED = 0.005;
-const PAN_SPEED = 0.001;
-
-const ZOOM_SPEED = 0.002;
-const FOV_SPEED = 0.0002;
-
-// camera state
-const camera = {
-  // spherical coords around target:
-  target: vec3.fromValues(0, 0, 0),
-  radius: 2,
-  azimuth: 0,               // horizontal angle, radians
-  elevation: 0,             // vertical angle, radians
-  // for projection:
-  fov: (60).toRad(),
-  near: 0.1,
-  far: 100,
-  viewDir: () => vec3.normalize(vec3.subtract(camera.target, camera.position)),
-  viewRight: () => vec3.normalize(vec3.cross(camera.viewDir(), worldUp)),
-  viewUp: () => vec3.normalize(vec3.cross(camera.viewRight(), camera.viewDir())),
-};
-
-// world up vector
-const worldUp = vec3.fromValues(0, 1, 0);
+const canvas = document.getElementById("canvas");
 
 function createPoints({
   numSamples,
@@ -56,14 +28,14 @@ function createPoints({
  * the disk of given radius, centered at `center`, whose
  * plane is oriented by `normal`.
  *
- * @param {vec3} center  A length-3 array [cx,cy,cz]
- * @param {vec3} normal  A length-3 array [nx,ny,nz] (need not be unit)
- * @param {number} radius                     Disk radius
- * @param {number} count                      Number of points
- * @returns {Float32Array}                    Packed [x,y,z, x,y,z, ...]
+ * @param {vec3} center  vec3 representing the center [cx,cy,cz]
+ * @param {vec3} normal  vec3 representing the normal [nx,ny,nz] (need not be unit)
+ * @param {number} radius  Disk radius
+ * @param {number} count  Number of points
+ * @returns {Array}  Packed coords and masses [x,y,z,m x,y,z,m ...]
  */
-function randomPointsInDisk(center, normal, radius, count) {
-  const out = new Float32Array(count * 4);
+function randomDiskPoints(center, normal, radius, count) {
+  const out = [];
 
   // 1) normalize the normal
   const n = vec3.normalize(normal);
@@ -95,11 +67,11 @@ function randomPointsInDisk(center, normal, radius, count) {
     const vz = v[2] * (r * Math.sin(theta));
 
     // world position = center + offset_u + offset_v
-    const idx = i * 4;
-    out[idx + 0] = center[0] + ux + vx;
-    out[idx + 1] = center[1] + uy + vy;
-    out[idx + 2] = center[2] + uz + vz;
-    out[idx + 3] = Math.random() * 2000; // mass
+    // const idx = i * 4;
+    out.push(center[0] + ux + vx);
+    out.push(center[1] + uy + vy);
+    out.push(center[2] + uz + vz);
+    out.push(Math.random() * 2000); // mass
   }
 
   return out;
@@ -107,15 +79,10 @@ function randomPointsInDisk(center, normal, radius, count) {
 
 
 async function main() {
-  const width = window.innerWidth;
-  const height = window.innerHeight;
-  const halfWidth = Math.round(width / 2);
-  const halfHeight = Math.round(height / 2);
 
   // WebGPU Setup
-  const canvas = document.getElementById("canvas");
-  canvas.width = width;
-  canvas.height = height;
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
   if (!adapter) {
     adapter = await navigator.gpu?.requestAdapter();
     device = await adapter?.requestDevice();
@@ -177,7 +144,7 @@ async function main() {
       struct Uniforms {
         matrix: mat4x4f,
         resolution: vec2f,
-        size: f32,
+        f: f32,
       };
 
       struct VSOutput {
@@ -192,6 +159,9 @@ async function main() {
         @builtin(instance_index) instNdx: u32,
         @builtin(vertex_index) vNdx: u32,
       ) -> VSOutput {
+        var vsOut: VSOutput;
+        let body = bodies[instNdx];
+
         let quad = array(
           vec2f(-1, -1),
           vec2f( 1, -1),
@@ -200,14 +170,18 @@ async function main() {
           vec2f( 1, -1),
           vec2f( 1,  1),
         );
-        var vsOut: VSOutput;
-        let body = bodies[instNdx];
-        let pos = quad[vNdx];
+        let uv = quad[vNdx];
+
+        //get radius from mass (r = cbrt(mass * 3/4 / pi))
+        let radius = pow(body.mass * 0.239, 1.0/3.0);
+        
         let clipPos = uni.matrix * vec4f(body.pos, 1);
-        // ensure points are at least 2px wide, get radius from mass (r = cbrt(mass * 3/4 / pi))
-        let pointPos = vec4f(pos / uni.resolution * 2 * max(clipPos.w, pow(body.mass * 0.239, 0.333333)), 0, 0);
-        vsOut.position = clipPos + pointPos;
-        vsOut.uv = pos;
+
+        // ensure points are at least 2px wide
+        let clipOffset = vec4f(uv / uni.resolution * 2 * max(clipPos.w, radius * uni.f), 0, 0);
+
+        vsOut.position = clipPos + clipOffset;
+        vsOut.uv = uv;
         return vsOut;
       }
 
@@ -216,32 +190,39 @@ async function main() {
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        const innerRadius = 0.9;
-        const outerRadius = 1;
-        let distance = length(vsOut.uv);
-        let alpha = 1.0 - smoothstep(innerRadius, outerRadius, distance);
-        if (alpha < 0.5) {discard;}
-        return vec4f(colorMap(vsOut.position.w) * alpha, alpha);
+        // circle SDF with anti-aliasing
+        // const innerRadius = 0.9;
+        // const outerRadius = 1;
+        // let distance = length(vsOut.uv);
+        // let alpha = 1.0 - smoothstep(innerRadius, outerRadius, distance);
+        // if (alpha < 0.9) { discard; }
+        // return vec4f(colorMap(vsOut.position.w) * alpha, alpha);
+
+        // circle SDF
+        let dist = length(vsOut.uv) - 1;
+        if (dist > 0.0) { discard; }
+        if (dist > -0.1) { return vec4f(0); }
+        return vec4f(colorMap(vsOut.position.w), 1);
       }
     `,
   });
 
   const renderBindGroupLayout = device.createBindGroupLayout({
     entries: [
-      { binding: 0, visibility: GPUShaderStage.VERTEX,  buffer: { type: "read-only-storage" } },
-      { binding: 1, visibility: GPUShaderStage.VERTEX,  buffer: { type: "uniform" } },
+      { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+      { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
     ],
   });
 
   const renderPipelineLayout = device.createPipelineLayout({
-    bindGroupLayouts: [ renderBindGroupLayout ],
+    bindGroupLayouts: [renderBindGroupLayout],
   });
-  
+
   const renderPipeline = device.createRenderPipeline({
     label: '3d point renderer',
     layout: renderPipelineLayout,// 'auto',
     vertex: {
-      module: renderModule, 
+      module: renderModule,
     },
     fragment: {
       module: renderModule,
@@ -258,12 +239,17 @@ async function main() {
     },
   });
 
-  const pointData = randomPointsInDisk(
+  const pointData = new Float32Array(randomDiskPoints(
     vec3.fromValues(0, 0, 0),
-    vec3.fromValues(Math.random(), Math.random(), Math.random()),
-    2,
+    vec3.fromValues(1, 1, 1), // vec3.fromValues(Math.random(), Math.random(), Math.random()),
+    2 * Math.random() + 2,
     10000
-  );
+  ).concat(randomDiskPoints(
+    vec3.scale(vec3.fromValues(Math.random(), Math.random(), Math.random()), 5),
+    vec3.fromValues(Math.random(), Math.random(), Math.random()),
+    2 * Math.random() + 2,
+    10000
+  )));
   // createPoints({
   //   radius: 1,
   //   numSamples: 1000,
@@ -284,13 +270,13 @@ async function main() {
   });
   const kMatrixOffset = 0;
   const kResolutionOffset = 16;
-  const kSizeOffset = 18;
+  const kFOffset = 18;
   const matrixValue = uniformValues.subarray(
     kMatrixOffset, kMatrixOffset + 16);
   const resolutionValue = uniformValues.subarray(
     kResolutionOffset, kResolutionOffset + 2);
-  const sizeValue = uniformValues.subarray(
-    kSizeOffset, kSizeOffset + 1);
+  const fValue = uniformValues.subarray(
+    kFOffset, kFOffset + 1);
 
 
   const bindGroup = device.createBindGroup({
@@ -317,118 +303,17 @@ async function main() {
     },
   };
 
-  // compute position from spherical coords
-  function updateCameraPosition() {
-    const { azimuth: phi, elevation: theta, radius: r, target: T } = camera;
-    const x = r * Math.cos(theta) * Math.sin(phi);
-    const y = r * Math.sin(theta);
-    const z = r * Math.cos(theta) * Math.cos(phi);
-    camera.position = vec3.fromValues(T[0] + x, T[1] + y, T[2] + z);
-  }
-  updateCameraPosition();
-
-  // camera interaction state
-  let state = {
-    orbitActive: false,
-    panActive: false,
-    lastX: 0,
-    lastY: 0,
-  };
-
-  // DOM event handlers
-  canvas.addEventListener('contextmenu', e => e.preventDefault()); // disable context menu
-
-  canvas.addEventListener('mousedown', e => {
-    if (e.button === 0) state.orbitActive = true; // left click to orbit
-    if (e.button === 1) resetCam();
-    if (e.button === 2) state.panActive = true;   // right click to pan
-    state.lastX = e.clientX;
-    state.lastY = e.clientY;
-  });
-  window.addEventListener('mouseup', e => {
-    if (e.button === 0) state.orbitActive = false;
-    if (e.button === 2) state.panActive = false;
-  });
-  canvas.addEventListener('mousemove', e => {
-    const dx = e.clientX - state.lastX;
-    const dy = e.clientY - state.lastY;
-    state.lastX = e.clientX;
-    state.lastY = e.clientY;
-
-
-    // Orbit
-    if (state.orbitActive) {
-      camera.azimuth -= dx * ROT_SPEED;
-      camera.elevation += dy * ROT_SPEED;
-      // clamp elevation to [-89, +89] deg
-      const limit = Math.PI / 2 - 0.01;
-      camera.elevation = (camera.elevation).clamp(-limit, limit);
-      updateCameraPosition();
-    }
-
-    // Pan within view-plane
-    if (state.panActive) {
-      // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
-      let adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
-      let pan = vec3.scaleAndAdd(
-        vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
-        camera.viewUp(),
-        dy * adjustedPanSpeed
-      );
-
-      // apply to target and camera position
-      camera.target = vec3.add(camera.target, pan);
-      camera.position = vec3.add(camera.position, pan);
-    }
-  });
-
-  canvas.addEventListener('wheel', e => {
-    e.preventDefault();
-
-    if (e.altKey) {
-      // adjust FOV
-      const initial = Math.tan(camera.fov / 2) * camera.radius;
-      camera.fov = (camera.fov + e.deltaY * FOV_SPEED).clamp((10).toRad(), (120).toRad());
-      if (e.shiftKey) camera.radius = initial / Math.tan(camera.fov / 2);
-    } else {
-      // move camera in/out
-      camera.radius = (camera.radius + e.deltaY * ZOOM_SPEED).clamp(camera.near, camera.far);
-    }
-    updateCameraPosition();
-  }, { passive: false });
-
-  function resetCam() {
-    camera.target = vec3.fromValues(0, 0, 0);
-    camera.radius = 2;
-    camera.azimuth = 0;
-    camera.elevation = 0;
-    camera.fov = (60).toRad();
-    updateCameraPosition();
-  }
-
-  window.addEventListener("keydown", (e) => {
-    switch (e.key) {
-      case "Alt":
-        e.preventDefault();
-        break;
-      case "Home":
-        resetCam();
-        break;
-    }
-  });
-
-  let rafId;
   let depthTexture;
 
   function render(time) {
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
- 
+
     // If we don't have a depth texture OR if its size is different
     // from the canvasTexture when make a new depth texture
     if (!depthTexture ||
-        depthTexture.width !== canvasTexture.width ||
-        depthTexture.height !== canvasTexture.height) {
+      depthTexture.width !== canvasTexture.width ||
+      depthTexture.height !== canvasTexture.height) {
       if (depthTexture) {
         depthTexture.destroy();
       }
@@ -440,21 +325,15 @@ async function main() {
     }
     renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
 
-    // Set the size in the uniform values
-    sizeValue[0] = 5;
 
     // Set the matrix in the uniform values
-    const aspect = canvas.clientWidth / canvas.clientHeight;
-    const proj = mat4.perspective(camera.fov, aspect, camera.near, camera.far);
-    const view = mat4.lookAt(
-      camera.position,
-      camera.target,
-      worldUp
-    );
-    mat4.multiply(proj, view, matrixValue);
+    matrixValue.set(matrix);
 
-    // Update the resolution in the uniform values
+    // Set the f value in the uniform values
+    fValue[0] = fVal;
+    // Update the resolution in the uniform values - only when resizing?
     resolutionValue.set([canvasTexture.width, canvasTexture.height]);
+
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
 
@@ -469,16 +348,18 @@ async function main() {
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
 
-    rafId = requestAnimationFrame(render);
+    requestAnimationFrame(render);
   }
 
-  rafId = requestAnimationFrame(render);
-
-  window.onresize = () => {
-    cancelAnimationFrame(rafId);
-    main();
-  };
+  updateMatrix();
+  requestAnimationFrame(render);
 }
+window.onresize = () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  updateMatrix();
+};
+
 
 function fail(msg) {
   alert(msg);

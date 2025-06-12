@@ -1,3 +1,9 @@
+
+Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
+Number.prototype.toRad = function () { return this * Math.PI / 180; }
+Number.prototype.toDeg = function () { return this / Math.PI * 180; }
+
+
 /*
  * vec3 and mat4 utility classes
  * Provides basic vector and matrix operations for 3D graphics
@@ -118,12 +124,13 @@ class mat4 {
 
   // generate lookAt view matrix
   static lookAt(eye, center, up, out = this.create()) {
+    // z along view direction
     let z = vec3.normalize(vec3.subtract(eye, center));
 
-    // compute s = up x f
+    // x = ||up x z||
     let x = vec3.normalize(vec3.cross(up, z));
 
-    // compute u = f x s
+    // y = ||z x x||
     let y = vec3.cross(z, x);
 
     out[0] = x[0];

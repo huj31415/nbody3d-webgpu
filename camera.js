@@ -1,0 +1,144 @@
+const ROT_SPEED = 0.005;
+const PAN_SPEED = 0.001;
+
+const ZOOM_SPEED = 0.0005;
+const FOV_SPEED = 0.0002;
+
+const minFOV = (10).toRad(), maxFOV = (100).toRad();
+
+const matrix = mat4.create();
+let fVal;
+
+// camera state
+const camera = {
+  // spherical coords around target:
+  target: vec3.fromValues(0, 0, 0),
+  radius: 2,
+  position: vec3.create(),
+  azimuth: 0,               // horizontal angle, radians
+  elevation: 0,             // vertical angle, radians
+  // for projection:
+  fov: (60).toRad(),
+  near: 0.1,
+  far: 100,
+  worldUp: vec3.fromValues(0, 1, 0),
+  viewDir: () => vec3.normalize(vec3.subtract(camera.target, camera.position)),
+  viewRight: () => vec3.normalize(vec3.cross(camera.viewDir(), camera.worldUp)),
+  viewUp: () => vec3.normalize(vec3.cross(camera.viewRight(), camera.viewDir())),
+};
+
+// compute position from spherical coords
+function updateCameraPosition() {
+  const { azimuth: phi, elevation: theta, radius: r, target: T } = camera;
+  const x = r * Math.cos(theta) * Math.sin(phi);
+  const y = r * Math.sin(theta);
+  const z = r * Math.cos(theta) * Math.cos(phi);
+  camera.position = vec3.fromValues(T[0] + x, T[1] + y, T[2] + z);
+}
+updateCameraPosition();
+
+// camera interaction state
+let state = {
+  orbitActive: false,
+  panActive: false,
+  lastX: 0,
+  lastY: 0,
+};
+
+// DOM event handlers
+canvas.addEventListener('contextmenu', e => e.preventDefault()); // disable context menu
+
+canvas.addEventListener('mousedown', e => {
+  if (e.button === 0) state.orbitActive = true; // left click to orbit
+  if (e.button === 1) resetCam();
+  if (e.button === 2) state.panActive = true;   // right click to pan
+  state.lastX = e.clientX;
+  state.lastY = e.clientY;
+});
+window.addEventListener('mouseup', e => {
+  if (e.button === 0) state.orbitActive = false;
+  if (e.button === 2) state.panActive = false;
+});
+canvas.addEventListener('mousemove', e => {
+  const dx = e.clientX - state.lastX;
+  const dy = e.clientY - state.lastY;
+  state.lastX = e.clientX;
+  state.lastY = e.clientY;
+
+
+  // Orbit
+  if (state.orbitActive) {
+    camera.azimuth -= dx * ROT_SPEED;
+    camera.elevation += dy * ROT_SPEED;
+    // clamp elevation to [-89, +89] deg
+    const limit = Math.PI / 2 - 0.01;
+    camera.elevation = (camera.elevation).clamp(-limit, limit);
+    updateCameraPosition();
+  }
+
+  // Pan within view-plane
+  if (state.panActive) {
+    // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
+    let adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
+    let pan = vec3.scaleAndAdd(
+      vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
+      camera.viewUp(),
+      dy * adjustedPanSpeed
+    );
+
+    // apply to target and camera position
+    camera.target = vec3.add(camera.target, pan);
+    camera.position = vec3.add(camera.position, pan);
+  }
+
+  updateMatrix();
+});
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+
+  if (e.altKey) {
+    // adjust FOV without zoom
+    const initial = Math.tan(camera.fov / 2) * camera.radius;
+    camera.fov = (camera.fov + e.deltaY * FOV_SPEED).clamp(minFOV, maxFOV);
+    camera.radius = initial / Math.tan(camera.fov / 2);
+  } else if (e.ctrlKey) {
+    // FOV zoom only
+    camera.fov = (camera.fov + e.deltaY * FOV_SPEED).clamp(minFOV, maxFOV);
+  } else {
+    // Zoom only - move camera in/out
+    camera.radius = (camera.radius + e.deltaY * ZOOM_SPEED * (camera.radius)).clamp(camera.near, camera.far);
+  }
+  updateCameraPosition();
+  updateMatrix();
+}, { passive: false });
+
+function resetCam() {
+  camera.target = vec3.fromValues(0, 0, 0);
+  camera.radius = 2;
+  camera.azimuth = 0;
+  camera.elevation = 0;
+  camera.fov = (60).toRad();
+  updateCameraPosition();
+  updateMatrix();
+}
+
+window.addEventListener("keydown", (e) => {
+  switch (e.key) {
+    case "Alt":
+      e.preventDefault();
+      break;
+    case "Home":
+      resetCam();
+      break;
+  }
+});
+
+function updateMatrix() {
+  const aspect = canvas.clientWidth / canvas.clientHeight;
+  const proj = mat4.perspective(camera.fov, aspect, camera.near, camera.far);
+  const view = mat4.lookAt(camera.position, camera.target, camera.worldUp);
+  mat4.multiply(proj, view, matrix);
+  // Set the f value in the uniform values
+  fVal = proj[5];
+}
