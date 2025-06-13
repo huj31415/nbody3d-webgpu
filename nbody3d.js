@@ -2,7 +2,13 @@
 
 let adapter, device;
 
+const TILE_SIZE = 256;
+
+let sizeFactor = window.outerHeight;
+
 const canvas = document.getElementById("canvas");
+
+const getRadius = (mass) => Math.cbrt(mass / (4/3 * Math.PI)) / sizeFactor * 2;
 
 function createPoints({
   numSamples,
@@ -37,6 +43,14 @@ function createPoints({
 function randomDiskPoints(center, normal, radius, count) {
   const out = [];
 
+  const cMass = 1e6;
+  const maxOuterMass = 100;
+  const cRadius = getRadius(cMass) + getRadius(maxOuterMass);
+  out.push(center[0]);
+  out.push(center[1]);
+  out.push(center[2]);
+  out.push(cMass); // mass
+
   // 1) normalize the normal
   const n = vec3.normalize(normal);
 
@@ -53,7 +67,7 @@ function randomDiskPoints(center, normal, radius, count) {
   for (let i = 0; i < count; i++) {
     // random radius is proportional sqrt(U) for uniform distribution
     const t = Math.random();
-    const r = t * Math.sqrt(t) * radius;
+    const r = t * Math.sqrt(t) * radius + cRadius;
     // random angle
     const theta = Math.random() * 2 * Math.PI;
 
@@ -71,7 +85,7 @@ function randomDiskPoints(center, normal, radius, count) {
     out.push(center[0] + ux + vx);
     out.push(center[1] + uy + vy);
     out.push(center[2] + uz + vz);
-    out.push(Math.random() * 2000); // mass
+    out.push(Math.random() * maxOuterMass); // mass
   }
 
   return out;
@@ -101,60 +115,99 @@ async function main() {
 
   const computeModule = device.createShaderModule({
     code: `
-      struct Body {
-        pos: vec3f,
-        mass: f32
-      }
-
       struct Uniforms {
         matrix: mat4x4f,
         resolution: vec2f,
-        size: f32,
+        f: f32,
+        dt: f32,
+        G: f32
       };
 
-      @group(0) @binding(0) var<storage, read> bodiesIn: array<Body>;
-      @group(0) @binding(1) var<storage, read_write> bodiesOut: array<Body>;
-      @group(0) @binding(2) var<uniform> uni: Uniforms;
+      // position and mass buffer
+      @group(0) @binding(0) var<storage, read_write> bodies: array<vec4f>;
+      @group(0) @binding(1) var<storage, read_write> vel: array<vec3f>;
+      @group(0) @binding(2) var<storage, read_write> accel: array<vec3f>;
+      @group(0) @binding(3) var<uniform> uni: Uniforms;
 
-      // calculate acceleration between bodies b1 and b2
-      // returns total acceleration
-      fn bodyAccel(b1: Body, b2: Body, a1: vec3f) -> vec3f {
-        let r = b2.pos - b1.pos;
-        let distSqr = dot(r, r) + 1e-4; // eps = 1e-2
-        let invDist3 = inverseSqrt(distSqr * distSqr * distSqr);
-        return a1 + (b2.mass * invDist3 * r);
+      const TILE_SIZE = ${TILE_SIZE};
+      var<workgroup> tile: array<vec4f, TILE_SIZE>;
+
+      // calculate gravitational acceleration between bodies b1 and b2
+      fn bodyAccel(b1: vec4f, b2: vec4f) -> vec3f {
+        let r = b2.xyz - b1.xyz;
+        let distSqr = dot(r, r) + 1e-6; // eps = 1e-3
+        let invDistCubed = inverseSqrt(distSqr * distSqr * distSqr);
+        return b2.w * invDistCubed * r;
       }
 
       // each thread accumulates accelerations for one body
-      @compute @workgroup_size(16, 16)
-      fn main(@builtin(global_invocation_id) global_id: vec3<u32>) {
-        let x = i32(global_id.x);
-        let y = i32(global_id.y);
+      @compute @workgroup_size(TILE_SIZE)
+      fn main(
+        @builtin(global_invocation_id) gid: vec3u,
+        @builtin(local_invocation_id) lid: vec3u,
+        @builtin(workgroup_id) wid: vec3u
+      ) {
+        let bodyIndex = gid.x;
+        let body = bodies[bodyIndex];
+
+        let nBodies = arrayLength(&bodies);
+
+        // number of tiles rounded up
+        let nTiles = (nBodies + TILE_SIZE - 1) / TILE_SIZE;
+
+        var newAccel = vec3f(0);
+
+        // iterate across tiles and accumulate acceleration
+        for (var t = 0u; t < nTiles; t++) {
+          let index = t * TILE_SIZE + lid.x;
+          if (index < nBodies) { tile[lid.x] = bodies[index]; }
+
+          // sync tile loading
+          workgroupBarrier();
+
+          // iterate within tile, unroll
+          for (var i = 0u; i < TILE_SIZE; i++) {
+            let body2 = tile[i];
+            if (bodyIndex == index) { continue; }
+            newAccel += bodyAccel(body, body2);
+          }
+
+          // sync before loading next tile
+          workgroupBarrier();
+        }
+        
+        // verlet position update
+        bodies[bodyIndex] = vec4f(body.xyz + uni.dt * (vel[bodyIndex] + 0.5 * accel[bodyIndex] * uni.dt), body.w);
+
+        // verlet velocity update
+        vel[bodyIndex] = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + newAccel) * uni.dt;
+
+        // save acceleration for the next time step
+        accel[bodyIndex] = newAccel;
       }
     `
   })
 
   const renderModule = device.createShaderModule({
     code: `
-      struct Body {
-        pos: vec3f,
-        mass: f32
-      }
-
       struct Uniforms {
         matrix: mat4x4f,
-        resolution: vec2f,
+        sizeRatio: vec2f,
         f: f32,
+        dt: f32,
+        G: f32
       };
 
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) uv: vec2f,
+        @location(1) r: f32
       };
 
-      @group(0) @binding(0) var<storage, read> bodies: array<Body>;
+      @group(0) @binding(0) var<storage, read> bodies: array<vec4f>;
       @group(0) @binding(1) var<uniform> uni: Uniforms;
 
+      
       @vertex fn vs(
         @builtin(instance_index) instNdx: u32,
         @builtin(vertex_index) vNdx: u32,
@@ -173,15 +226,16 @@ async function main() {
         let uv = quad[vNdx];
 
         //get radius from mass (r = cbrt(mass * 3/4 / pi))
-        let radius = pow(body.mass * 0.239, 1.0/3.0);
+        let radius = pow(body.w / 4.189, 1.0/3.0);
         
-        let clipPos = uni.matrix * vec4f(body.pos, 1);
+        let clipPos = uni.matrix * vec4f(body.xyz, 1);
 
         // ensure points are at least 2px wide
-        let clipOffset = vec4f(uv / uni.resolution * 2 * max(clipPos.w, radius * uni.f), 0, 0);
+        let clipOffset = vec4f(uv * 2 * uni.sizeRatio * max(clipPos.w, radius * uni.f), 0, 0); // / uni.resolution
 
         vsOut.position = clipPos + clipOffset;
         vsOut.uv = uv;
+        vsOut.r = radius;
         return vsOut;
       }
 
@@ -201,26 +255,26 @@ async function main() {
         // circle SDF
         let dist = length(vsOut.uv) - 1;
         if (dist > 0.0) { discard; }
-        if (dist > -0.1) { return vec4f(0); }
+        if (dist > -0.5 / vsOut.r) { return vec4f(0); }
         return vec4f(colorMap(vsOut.position.w), 1);
       }
     `,
   });
 
-  const renderBindGroupLayout = device.createBindGroupLayout({
-    entries: [
-      { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
-      { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
-    ],
-  });
+  // const renderBindGroupLayout = device.createBindGroupLayout({
+  //   entries: [
+  //     { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
+  //     { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
+  //   ],
+  // });
 
-  const renderPipelineLayout = device.createPipelineLayout({
-    bindGroupLayouts: [renderBindGroupLayout],
-  });
+  // const renderPipelineLayout = device.createPipelineLayout({
+  //   bindGroupLayouts: [renderBindGroupLayout],
+  // });
 
   const renderPipeline = device.createRenderPipeline({
     label: '3d point renderer',
-    layout: renderPipelineLayout,// 'auto',
+    layout: 'auto', // renderPipelineLayout,
     vertex: {
       module: renderModule,
     },
@@ -245,7 +299,7 @@ async function main() {
     2 * Math.random() + 2,
     10000
   ).concat(randomDiskPoints(
-    vec3.scale(vec3.fromValues(Math.random(), Math.random(), Math.random()), 5),
+    vec3.scale(vec3.fromValues(Math.random()-.5, Math.random()-.5, Math.random()-.5), 5),
     vec3.fromValues(Math.random(), Math.random(), Math.random()),
     2 * Math.random() + 2,
     10000
@@ -263,24 +317,25 @@ async function main() {
   });
   device.queue.writeBuffer(pointBuffer, 0, pointData);
 
-  const uniformValues = new Float32Array(16 + 2 + 1 + 1);
+  const uniformValues = new Float32Array(24); // 16 mat + 2 res + 4 + 2pad 
   const uniformBuffer = device.createBuffer({
     size: uniformValues.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
   const kMatrixOffset = 0;
-  const kResolutionOffset = 16;
+  const kSizeFactorOffset = 16;
   const kFOffset = 18;
-  const matrixValue = uniformValues.subarray(
-    kMatrixOffset, kMatrixOffset + 16);
-  const resolutionValue = uniformValues.subarray(
-    kResolutionOffset, kResolutionOffset + 2);
-  const fValue = uniformValues.subarray(
-    kFOffset, kFOffset + 1);
+  const kDtOffset = 19;
+  const kGOffset = 20;
+  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
+  const sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 2);
+  const fValue = uniformValues.subarray(kFOffset, kFOffset + 1);
+  const dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
+  const GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
 
 
-  const bindGroup = device.createBindGroup({
-    layout: renderBindGroupLayout, //pipeline.getBindGroupLayout(0),
+  const renderBindGroup = device.createBindGroup({
+    layout: renderPipeline.getBindGroupLayout(0), // renderBindGroupLayout, 
     entries: [
       { binding: 0, resource: { buffer: pointBuffer } },
       { binding: 1, resource: { buffer: uniformBuffer } },
@@ -332,7 +387,6 @@ async function main() {
     // Set the f value in the uniform values
     fValue[0] = fVal;
     // Update the resolution in the uniform values - only when resizing?
-    resolutionValue.set([canvasTexture.width, canvasTexture.height]);
 
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
@@ -341,7 +395,7 @@ async function main() {
     const pass = encoder.beginRenderPass(renderPassDescriptor);
     pass.setPipeline(renderPipeline);
     pass.setVertexBuffer(0, pointBuffer);
-    pass.setBindGroup(0, bindGroup);
+    pass.setBindGroup(0, renderBindGroup);
     pass.draw(6, kNumPoints);
     pass.end();
 
@@ -351,14 +405,18 @@ async function main() {
     requestAnimationFrame(render);
   }
 
-  updateMatrix();
+  window.onresize = () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    aspect = canvas.clientWidth / canvas.clientHeight;
+    sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
+    updateMatrix();
+  };
+
+  updateCameraPosition();
+  sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
   requestAnimationFrame(render);
 }
-window.onresize = () => {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  updateMatrix();
-};
 
 
 function fail(msg) {
