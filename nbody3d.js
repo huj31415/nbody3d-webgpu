@@ -4,6 +4,9 @@ let adapter, device;
 
 const TILE_SIZE = 256;
 
+const G = 1;
+const dt = 0.01;
+
 let sizeFactor = window.outerHeight;
 
 const canvas = document.getElementById("canvas");
@@ -42,55 +45,60 @@ function createPoints({
  * @param {number} count  Number of points
  * @returns {Array}  Packed coords and masses [x,y,z,m x,y,z,m ...]
  */
-function randomDiskPoints(center, normal, radius, count) {
-  const out = [];
+function randomDiskPoints(list) {
+  const pos = [];
+  const vel = [];
 
-  const cMass = 1e6;
-  const maxOuterMass = 100;
-  const cRadius = getRadius(cMass) + getRadius(maxOuterMass);
-  out.push(center[0]);
-  out.push(center[1]);
-  out.push(center[2]);
-  out.push(cMass); // mass
+  list.forEach(config => {
+    const [center, normal, radius, count] = config;
 
-  // 1) normalize the normal
-  const n = vec3.normalize(normal);
+    const cMass = 1e6;
+    const maxOuterMass = 100;
+    const cRadius = getRadius(cMass) + getRadius(maxOuterMass);
+    pos.push(center[0]);
+    pos.push(center[1]);
+    pos.push(center[2]);
+    pos.push(cMass); // mass
 
-  // 2) build an orthonormal basis {u,v} for the disk plane
-  //    choose any vector not parallel to n:
-  const tmp = Math.abs(n[0]) > 0.9
-    ? vec3.fromValues(0, 1, 0)
-    : vec3.fromValues(1, 0, 0);
+    // 1) normalize the normal
+    const n = vec3.normalize(normal);
 
-  const u = vec3.normalize(vec3.cross(tmp, n));
-  const v = vec3.cross(n, u);
+    // 2) build an orthonormal basis {u,v} for the disk plane
+    //    choose any vector not parallel to n:
+    const tmp = Math.abs(n[0]) > 0.9
+      ? vec3.fromValues(0, 1, 0)
+      : vec3.fromValues(1, 0, 0);
 
-  // 3) sample points
-  for (let i = 0; i < count; i++) {
-    // random radius is proportional sqrt(U) for uniform distribution
-    const t = Math.random();
-    const r = t * Math.sqrt(t) * radius + cRadius;
-    // random angle
-    const theta = Math.random() * 2 * Math.PI;
+    const u = vec3.normalize(vec3.cross(tmp, n));
+    const v = vec3.cross(n, u);
 
-    // local offset = u*(r*cos theta) + v*(r*sin theta)
-    const ux = u[0] * (r * Math.cos(theta));
-    const uy = u[1] * (r * Math.cos(theta));
-    const uz = u[2] * (r * Math.cos(theta));
+    // 3) sample points
+    for (let i = 0; i < count; i++) {
+      // random radius is proportional sqrt(U) for uniform distribution
+      const t = Math.random();
+      const r = t * Math.sqrt(t) * radius + cRadius;
+      // random angle
+      const theta = Math.random() * 2 * Math.PI;
 
-    const vx = v[0] * (r * Math.sin(theta));
-    const vy = v[1] * (r * Math.sin(theta));
-    const vz = v[2] * (r * Math.sin(theta));
+      // local offset = u*(r*cos theta) + v*(r*sin theta)
+      const ux = u[0] * (r * Math.cos(theta));
+      const uy = u[1] * (r * Math.cos(theta));
+      const uz = u[2] * (r * Math.cos(theta));
 
-    // world position = center + offset_u + offset_v
-    // const idx = i * 4;
-    out.push(center[0] + ux + vx);
-    out.push(center[1] + uy + vy);
-    out.push(center[2] + uz + vz);
-    out.push(Math.random() * maxOuterMass); // mass
-  }
+      const vx = v[0] * (r * Math.sin(theta));
+      const vy = v[1] * (r * Math.sin(theta));
+      const vz = v[2] * (r * Math.sin(theta));
 
-  return out;
+      // world position = center + offset_u + offset_v
+      // const idx = i * 4;
+      pos.push(center[0] + ux + vx);
+      pos.push(center[1] + uy + vy);
+      pos.push(center[2] + uz + vz);
+      pos.push(Math.random() * maxOuterMass); // mass
+    }
+  });
+
+  return pos;
 }
 
 
@@ -115,17 +123,19 @@ async function main() {
     format: swapChainFormat,
   });
 
-  const bodyData = new Float32Array(randomDiskPoints(
-    vec3.fromValues(0, 0, 0),
-    vec3.fromValues(1, 1, 1), // vec3.fromValues(Math.random(), Math.random(), Math.random()),
-    2 * Math.random() + 2,
-    10000
-  ).concat(randomDiskPoints(
-    vec3.scale(vec3.fromValues(Math.random() - .5, Math.random() - .5, Math.random() - .5), 5),
-    vec3.fromValues(Math.random(), Math.random(), Math.random()),
-    2 * Math.random() + 2,
-    10000
-  )));
+  const bodyData = new Float32Array(randomDiskPoints([
+    [
+      vec3.fromValues(0, 0, 0),
+      vec3.fromValues(1, 1, 1), // vec3.fromValues(Math.random(), Math.random(), Math.random()),
+      2 * Math.random() + 2,
+      10000
+    ], [
+      vec3.scale(vec3.fromValues(Math.random() - .5, Math.random() - .5, Math.random() - .5), 5),
+      vec3.fromValues(Math.random(), Math.random(), Math.random()),
+      2 * Math.random() + 2,
+      10000
+    ]
+  ]));
   // createPoints({
   //   radius: 1,
   //   numSamples: 1000,
@@ -133,11 +143,23 @@ async function main() {
   const kNumPoints = bodyData.length / 4;
 
   const bodyBuffer = device.createBuffer({
-    label: 'body buffer',
+    label: "body buffer",
     size: bodyData.byteLength,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
   });
   device.queue.writeBuffer(bodyBuffer, 0, bodyData);
+
+  // const velBuffer = device.createBuffer({
+  //   label: "velocity buffer",
+  //   size: velData.byteLength,
+  //   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  // });
+
+  // const accelBuffer = device.createBuffer({
+  //   label: "acceleration buffer",
+  //   size: accelData.byteLength,
+  //   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  // });
 
   const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 4 size,f,dt,g
   const uniformBuffer = device.createBuffer({
@@ -150,7 +172,7 @@ async function main() {
   const kFOffset = 20;
   const kDtOffset = 21;
   const kGOffset = 22;
-  
+
   uni.matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
   uni.cameraPosValue = uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3);
   uni.sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 1);
