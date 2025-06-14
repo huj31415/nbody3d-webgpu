@@ -54,7 +54,7 @@ function randomDiskPoints(list) {
   list.forEach(config => {
     const [center, centerV, normal, radius, count] = config;
 
-    const cMass = 1e6;
+    const cMass = 1e7;
     const maxOuterMass = 100;
     const cRadius = getRadius(cMass) * 2 + getRadius(maxOuterMass);
     pos.push(...center);
@@ -139,14 +139,14 @@ async function main() {
     [
       [0, 0, 0],
       // [0, 0, 0],
-      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 2),
+      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 5),
       [1, 1, 1], // vec3.fromValues(Math.random(), Math.random(), Math.random()),
       2 * Math.random() + 2,
-      10000
+      20000
     ],
     [
+      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 10),
       vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 5),
-      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 2),
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       10000
@@ -163,7 +163,7 @@ async function main() {
 
   const kNumBodies = bodyData.length / 4;
 
-  const accelData = new Float32Array(kNumBodies); // must use vec4f due to padding
+  const accelData = new Float32Array(bodyData.length); // must use vec4f due to padding
 
   const bodyBuffer = device.createBuffer({
     label: "body buffer",
@@ -245,18 +245,14 @@ async function main() {
         @builtin(workgroup_id) wid: vec3u
       ) {
         let bodyIndex = gid.x;
-        let body = bodies[bodyIndex];
-
         let nBodies = arrayLength(&bodies);
+        let isBody = bodyIndex < nBodies;
+        let body = bodies[bodyIndex];
 
         // number of tiles rounded up
         let nTiles = (nBodies + TILE_SIZE - 1) / TILE_SIZE;
 
         var newAccel = vec3f(0);
-
-        // verlet position update
-        bodies[bodyIndex] = body + uni.dt * (vel[bodyIndex] + 0.5 * accel[bodyIndex] * uni.dt);
-        workgroupBarrier();
 
         // iterate across tiles and accumulate acceleration
         for (var t = 0u; t < nTiles; t++) {
@@ -278,16 +274,21 @@ async function main() {
           workgroupBarrier();
         }
         
+        
+        // if (bodyIndex < nBodies) {
         let vec4accel = vec4f(newAccel, 0);
 
-        // verlet velocity update
-        vel[bodyIndex] = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
+        // velocity verlet with frame shift
+        vel[bodyIndex] += 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
+        bodies[bodyIndex] += uni.dt * (vel[bodyIndex] + 0.5 * vec4accel * uni.dt); // use old accel?
 
+        // euler
         // vel[bodyIndex] += vec4accel * uni.dt;
         // bodies[bodyIndex] += vel[bodyIndex] * uni.dt;
 
         // save acceleration for the next time step
         accel[bodyIndex] = vec4accel;
+        // }
       }
     `,
     label: "compute module"
@@ -381,8 +382,8 @@ async function main() {
         // return vec4f(colorMap(vsOut.position.w), 1);
 
         let c = length(accel[vsOut.index]);
-        // return vec4f(colorMap(c / 1f), 1);
-        if (c > 0) { return vec4f(1,0,0,1); } else {return vec4f(0,0,1,1);}
+        return vec4f(colorMap(c / 40f), 1);
+        // if (c > 0) { return vec4f(1,0,0,1); } else {return vec4f(0,0,1,1);}
       }
     `,
     label: "render module"
@@ -424,7 +425,7 @@ async function main() {
     layout: renderPipeline.getBindGroupLayout(0), // renderBindGroupLayout, 
     entries: [ // swith accel/vel buffer for different visualization
       { binding: 0, resource: { buffer: bodyBuffer } },
-      { binding: 1, resource: { buffer: accelBuffer } },
+      { binding: 1, resource: { buffer: velBuffer } },
       { binding: 2, resource: { buffer: uniformBuffer } },
     ],
   });
