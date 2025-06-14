@@ -4,8 +4,8 @@ let adapter, device;
 
 const TILE_SIZE = 256;
 
-const G = 1;
-const dt = 0.01;
+let G = .0001;
+let dt = 0.0001;
 
 let sizeFactor = window.outerHeight;
 
@@ -38,6 +38,8 @@ function createPoints({
  * Generates N random points uniformly distributed inside
  * the disk of given radius, centered at `center`, whose
  * plane is oriented by `normal`.
+ * 
+ * Pass arguments as a list of lists of args, eg. [[center, norm, r, cnt], [center, norm, r, cnt]]
  *
  * @param {vec3} center  vec3 representing the center [cx,cy,cz]
  * @param {vec3} normal  vec3 representing the normal [nx,ny,nz] (need not be unit)
@@ -50,15 +52,14 @@ function randomDiskPoints(list) {
   const vel = [];
 
   list.forEach(config => {
-    const [center, normal, radius, count] = config;
+    const [center, centerV, normal, radius, count] = config;
 
     const cMass = 1e6;
     const maxOuterMass = 100;
-    const cRadius = getRadius(cMass) + getRadius(maxOuterMass);
-    pos.push(center[0]);
-    pos.push(center[1]);
-    pos.push(center[2]);
+    const cRadius = getRadius(cMass) * 2 + getRadius(maxOuterMass);
+    pos.push(...center);
     pos.push(cMass); // mass
+    vel.push(...centerV, 0);
 
     // 1) normalize the normal
     const n = vec3.normalize(normal);
@@ -80,25 +81,36 @@ function randomDiskPoints(list) {
       // random angle
       const theta = Math.random() * 2 * Math.PI;
 
-      // local offset = u*(r*cos theta) + v*(r*sin theta)
-      const ux = u[0] * (r * Math.cos(theta));
-      const uy = u[1] * (r * Math.cos(theta));
-      const uz = u[2] * (r * Math.cos(theta));
+      // normal component for thickness
+      const wPos = vec3.scale(n, (Math.random() - 0.5) / 10 * (1 / (10 * (r / radius) ** 2 + 1)));
 
-      const vx = v[0] * (r * Math.sin(theta));
-      const vy = v[1] * (r * Math.sin(theta));
-      const vz = v[2] * (r * Math.sin(theta));
+      // local offset = u*(r*cos theta) + v*(r*sin theta)
+      const x = Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.cos(theta);
+      const y = Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.sin(theta);
+
+      const uPos = vec3.scale(u, x);
+      const vPos = vec3.scale(v, y);
 
       // world position = center + offset_u + offset_v
-      // const idx = i * 4;
-      pos.push(center[0] + ux + vx);
-      pos.push(center[1] + uy + vy);
-      pos.push(center[2] + uz + vz);
+      pos.push(...vec3.add(vec3.add(center, wPos), vec3.add(uPos, vPos)));
       pos.push(Math.random() * maxOuterMass); // mass
+
+      // tangent angle
+      const tangent = theta + Math.PI / 2;
+      let speed = Math.sqrt(G * cMass / r);
+
+      const tangentX = speed * Math.cos(tangent);
+      const tangentY = speed * Math.sin(tangent);
+
+      const uVel = vec3.scale(u, tangentX);
+      const vVel = vec3.scale(v, tangentY);
+
+      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), 0);
+      // vel.push(0, 0, 0, 0);
     }
   });
 
-  return pos;
+  return [new Float32Array(pos), new Float32Array(vel)];
 }
 
 
@@ -123,24 +135,35 @@ async function main() {
     format: swapChainFormat,
   });
 
-  const bodyData = new Float32Array(randomDiskPoints([
+  const [bodyData, velData] = randomDiskPoints([
     [
-      vec3.fromValues(0, 0, 0),
-      vec3.fromValues(1, 1, 1), // vec3.fromValues(Math.random(), Math.random(), Math.random()),
+      [0, 0, 0],
+      // [0, 0, 0],
+      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 2),
+      [1, 1, 1], // vec3.fromValues(Math.random(), Math.random(), Math.random()),
       2 * Math.random() + 2,
       10000
-    ], [
-      vec3.scale(vec3.fromValues(Math.random() - .5, Math.random() - .5, Math.random() - .5), 5),
-      vec3.fromValues(Math.random(), Math.random(), Math.random()),
+    ],
+    [
+      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 5),
+      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 2),
+      [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       10000
-    ]
-  ]));
+    ],
+  ]);
   // createPoints({
   //   radius: 1,
   //   numSamples: 1000,
   // });
-  const kNumPoints = bodyData.length / 4;
+  // const [bodyData, velData] = [
+  //   new Float32Array([0,0,0,1000, 1,1,1,1000, 1,0,0,1000, 0,1,0,1000, 0,0,1,1000, 1,1,0,1000, 1,0,1,1000, 0,1,1,1000]),
+  //   new Float32Array([0,0,0,0, 0,.01,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])
+  // ];
+
+  const kNumBodies = bodyData.length / 4;
+
+  const accelData = new Float32Array(kNumBodies); // must use vec4f due to padding
 
   const bodyBuffer = device.createBuffer({
     label: "body buffer",
@@ -149,17 +172,19 @@ async function main() {
   });
   device.queue.writeBuffer(bodyBuffer, 0, bodyData);
 
-  // const velBuffer = device.createBuffer({
-  //   label: "velocity buffer",
-  //   size: velData.byteLength,
-  //   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  // });
+  const velBuffer = device.createBuffer({
+    label: "velocity buffer",
+    size: velData.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(velBuffer, 0, velData);
 
-  // const accelBuffer = device.createBuffer({
-  //   label: "acceleration buffer",
-  //   size: accelData.byteLength,
-  //   usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-  // });
+  const accelBuffer = device.createBuffer({
+    label: "acceleration buffer",
+    size: accelData.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(accelBuffer, 0, accelData);
 
   const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 4 size,f,dt,g
   const uniformBuffer = device.createBuffer({
@@ -180,22 +205,25 @@ async function main() {
   uni.dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
   uni.GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
 
+  const uniformStruct = `
+    struct Uniforms {
+      matrix: mat4x4f,
+      cameraPos: vec3f,
+      sizeRatio: f32,
+      f: f32,
+      dt: f32,
+      G: f32,
+    };
+  `;
 
   const computeModule = device.createShaderModule({
     code: `
-      struct Uniforms {
-        matrix: mat4x4f,
-        sizeRatio: f32,
-        f: f32,
-        dt: f32,
-        G: f32,
-        cameraPos: vec3f,
-      };
+      ${uniformStruct}
 
       // position and mass buffer
       @group(0) @binding(0) var<storage, read_write> bodies: array<vec4f>;
-      @group(0) @binding(1) var<storage, read_write> vel: array<vec3f>;
-      @group(0) @binding(2) var<storage, read_write> accel: array<vec3f>;
+      @group(0) @binding(1) var<storage, read_write> vel: array<vec4f>;
+      @group(0) @binding(2) var<storage, read_write> accel: array<vec4f>;
       @group(0) @binding(3) var<uniform> uni: Uniforms;
 
       const TILE_SIZE = ${TILE_SIZE};
@@ -204,11 +232,11 @@ async function main() {
       // calculate gravitational acceleration between bodies b1 and b2
       fn bodyAccel(b1: vec4f, b2: vec4f) -> vec3f {
         let r = b2.xyz - b1.xyz;
-        let distSqr = dot(r, r) + 1e-6; // eps = 1e-3
+        let distSqr = dot(r, r) + 1e-4; // eps = 1e-2
         let invDistCubed = inverseSqrt(distSqr * distSqr * distSqr);
-        return b2.w * invDistCubed * r;
+        return uni.G * b2.w * invDistCubed * r;
       }
-
+        
       // each thread accumulates accelerations for one body
       @compute @workgroup_size(TILE_SIZE)
       fn main(
@@ -226,6 +254,10 @@ async function main() {
 
         var newAccel = vec3f(0);
 
+        // verlet position update
+        bodies[bodyIndex] = body + uni.dt * (vel[bodyIndex] + 0.5 * accel[bodyIndex] * uni.dt);
+        workgroupBarrier();
+
         // iterate across tiles and accumulate acceleration
         for (var t = 0u; t < nTiles; t++) {
           let index = t * TILE_SIZE + lid.x;
@@ -236,64 +268,62 @@ async function main() {
 
           // iterate within tile, unroll
           for (var i = 0u; i < TILE_SIZE; i++) {
-            let body2 = tile[i];
-            if (bodyIndex == index) { continue; }
-            newAccel += bodyAccel(body, body2);
+            let index2 = t * TILE_SIZE + i;
+            if (index2 <= nBodies && index2 != bodyIndex) {
+              newAccel += bodyAccel(body, tile[i]);
+            }
           }
 
           // sync before loading next tile
           workgroupBarrier();
         }
         
-        // verlet position update
-        bodies[bodyIndex] = vec4f(body.xyz + uni.dt * (vel[bodyIndex] + 0.5 * accel[bodyIndex] * uni.dt), body.w);
+        let vec4accel = vec4f(newAccel, 0);
 
         // verlet velocity update
-        vel[bodyIndex] = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + newAccel) * uni.dt;
+        vel[bodyIndex] = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
+
+        // vel[bodyIndex] += vec4accel * uni.dt;
+        // bodies[bodyIndex] += vel[bodyIndex] * uni.dt;
 
         // save acceleration for the next time step
-        accel[bodyIndex] = newAccel;
+        accel[bodyIndex] = vec4accel;
       }
     `,
     label: "compute module"
   });
 
-  // const computePipeline = device.createComputePipeline({
-  //   layout: 'auto',
-  //   compute: { module: computeModule, entryPoint: 'main' },
-  //   label: "compute pipeline"
-  // });
+  const computePipeline = device.createComputePipeline({
+    layout: 'auto',
+    compute: { module: computeModule, entryPoint: 'main' },
+    label: "compute pipeline"
+  });
 
-  // const computeBindGroup = device.createBindGroup({
-  //   layout: computePipeline.getBindGroupLayout(0),
-  //   entries: [
-  //     { binding: 0, resource: { buffer: bodyBuffer } },
-  //     { binding: 1, resource: { buffer: velBuffer } },
-  //     { binding: 2, resource: { buffer: accelBuffer } },
-  //     { binding: 3, resource: { buffer: uniformBuffer } },
-  //   ],
-  //   label: "compute bind group"
-  // });
+  const computeBindGroup = device.createBindGroup({
+    layout: computePipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: bodyBuffer } },
+      { binding: 1, resource: { buffer: velBuffer } },
+      { binding: 2, resource: { buffer: accelBuffer } },
+      { binding: 3, resource: { buffer: uniformBuffer } },
+    ],
+    label: "compute bind group"
+  });
 
   const renderModule = device.createShaderModule({
     code: `
-      struct Uniforms {
-        matrix: mat4x4f,
-        cameraPos: vec3f,
-        sizeRatio: f32,
-        f: f32,
-        dt: f32,
-        G: f32,
-      };
+      ${uniformStruct}
 
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) uv: vec2f,
-        @location(1) r: f32
+        @location(1) r: f32,
+        @location(2) @interpolate(flat) index: u32,
       };
 
       @group(0) @binding(0) var<storage, read> bodies: array<vec4f>;
-      @group(0) @binding(1) var<uniform> uni: Uniforms;
+      @group(0) @binding(1) var<storage, read> accel: array<vec4f>;
+      @group(0) @binding(2) var<uniform> uni: Uniforms;
 
       
       @vertex fn vs(
@@ -315,14 +345,6 @@ async function main() {
         //get radius from mass (r = cbrt(mass * 3/4 / pi))
         let radius = pow(body.w / 4.189, 1.0/3.0);
         
-        // billboards parallel to view plane with min size
-        // let clipPos = uni.matrix * vec4f(body.xyz, 1);
-        // // ensure points are at least 2px wide
-        // let clipOffset = vec4f(uv * 2 * uni.sizeRatio * max(clipPos.w, radius * uni.f), 0, 0); // / uni.resolution
-        // vsOut.position = clipPos + clipOffset;
-
-        // billboards perpendicular to camera
-        
         let worldPos = body.xyz;
 
         // compute view vector from camera to particle
@@ -343,6 +365,7 @@ async function main() {
         vsOut.position = uni.matrix * vec4f(cornerPos, 1.0);
         vsOut.uv = uv;
         vsOut.r = radius;
+        vsOut.index = instNdx;
         return vsOut;
       }
 
@@ -351,19 +374,15 @@ async function main() {
       }
 
       @fragment fn fs(vsOut: VSOutput) -> @location(0) vec4f {
-        // circle SDF with anti-aliasing
-        // const innerRadius = 0.9;
-        // const outerRadius = 1;
-        // let distance = length(vsOut.uv);
-        // let alpha = 1.0 - smoothstep(innerRadius, outerRadius, distance);
-        // if (alpha < 0.9) { discard; }
-        // return vec4f(colorMap(vsOut.position.w) * alpha, alpha);
-
         // circle SDF
         let dist = length(vsOut.uv) - 1;
         if (dist > 0.0) { discard; }
         if (dist > -0.5 / vsOut.r) { return vec4f(0); }
-        return vec4f(colorMap(vsOut.position.w), 1);
+        // return vec4f(colorMap(vsOut.position.w), 1);
+
+        let c = length(accel[vsOut.index]);
+        // return vec4f(colorMap(c / 1f), 1);
+        if (c > 0) { return vec4f(1,0,0,1); } else {return vec4f(0,0,1,1);}
       }
     `,
     label: "render module"
@@ -403,9 +422,10 @@ async function main() {
 
   const renderBindGroup = device.createBindGroup({
     layout: renderPipeline.getBindGroupLayout(0), // renderBindGroupLayout, 
-    entries: [
+    entries: [ // swith accel/vel buffer for different visualization
       { binding: 0, resource: { buffer: bodyBuffer } },
-      { binding: 1, resource: { buffer: uniformBuffer } },
+      { binding: 1, resource: { buffer: accelBuffer } },
+      { binding: 2, resource: { buffer: uniformBuffer } },
     ],
   });
 
@@ -447,15 +467,25 @@ async function main() {
     }
     renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
 
+    uni.GValue.set([G]);
+    uni.dtValue.set([dt]);
+
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
 
     const encoder = device.createCommandEncoder();
-    const pass = encoder.beginRenderPass(renderPassDescriptor);
-    pass.setPipeline(renderPipeline);
-    pass.setVertexBuffer(0, bodyBuffer);
-    pass.setBindGroup(0, renderBindGroup);
-    pass.draw(6, kNumPoints);
-    pass.end();
+
+    const computePass = encoder.beginComputePass();
+    computePass.setPipeline(computePipeline);
+    computePass.setBindGroup(0, computeBindGroup);
+    computePass.dispatchWorkgroups(Math.ceil(kNumBodies / TILE_SIZE));
+    computePass.end();
+
+    const renderPass = encoder.beginRenderPass(renderPassDescriptor);
+    renderPass.setPipeline(renderPipeline);
+    renderPass.setVertexBuffer(0, bodyBuffer);
+    renderPass.setBindGroup(0, renderBindGroup);
+    renderPass.draw(6, kNumBodies);
+    renderPass.end();
 
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
@@ -473,11 +503,6 @@ async function main() {
   updateCameraPosition();
   uni.sizeFactorValue.set([1 / sizeFactor]);
   requestAnimationFrame(render);
-}
-
-
-function fail(msg) {
-  alert(msg);
 }
 
 main();

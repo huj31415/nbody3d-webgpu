@@ -71,15 +71,15 @@ class vec3 {
     return out;
   }
 
+  static length(a) {
+    return Math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2]);
+  }
+
   // normalize vector a, store in out
   static normalize(a, out = this.create()) {
-    const x = a[0], y = a[1], z = a[2];
-    let len = x * x + y * y + z * z;
+    let len = this.length(a);
     if (len > 0) {
-      len = 1 / Math.sqrt(len);
-      out[0] = x * len;
-      out[1] = y * len;
-      out[2] = z * len;
+      out = this.scale(a, 1 / len);
     }
     return out;
   }
