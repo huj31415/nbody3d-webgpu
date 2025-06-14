@@ -8,7 +8,9 @@ let sizeFactor = window.outerHeight;
 
 const canvas = document.getElementById("canvas");
 
-const getRadius = (mass) => Math.cbrt(mass / (4/3 * Math.PI)) / sizeFactor;
+const uni = {};
+
+const getRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI)) / sizeFactor;
 
 function createPoints({
   numSamples,
@@ -113,15 +115,59 @@ async function main() {
     format: swapChainFormat,
   });
 
+  const bodyData = new Float32Array(randomDiskPoints(
+    vec3.fromValues(0, 0, 0),
+    vec3.fromValues(1, 1, 1), // vec3.fromValues(Math.random(), Math.random(), Math.random()),
+    2 * Math.random() + 2,
+    10000
+  ).concat(randomDiskPoints(
+    vec3.scale(vec3.fromValues(Math.random() - .5, Math.random() - .5, Math.random() - .5), 5),
+    vec3.fromValues(Math.random(), Math.random(), Math.random()),
+    2 * Math.random() + 2,
+    10000
+  )));
+  // createPoints({
+  //   radius: 1,
+  //   numSamples: 1000,
+  // });
+  const kNumPoints = bodyData.length / 4;
+
+  const bodyBuffer = device.createBuffer({
+    label: 'body buffer',
+    size: bodyData.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+  });
+  device.queue.writeBuffer(bodyBuffer, 0, bodyData);
+
+  const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 4 size,f,dt,g
+  const uniformBuffer = device.createBuffer({
+    size: uniformValues.byteLength,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+  const kMatrixOffset = 0;
+  const kCamPosOffset = 16;
+  const kSizeFactorOffset = 19;
+  const kFOffset = 20;
+  const kDtOffset = 21;
+  const kGOffset = 22;
+  
+  uni.matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
+  uni.cameraPosValue = uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3);
+  uni.sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 1);
+  uni.fValue = uniformValues.subarray(kFOffset, kFOffset + 1);
+  uni.dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
+  uni.GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
+
+
   const computeModule = device.createShaderModule({
     code: `
       struct Uniforms {
         matrix: mat4x4f,
-        sizeRatio: vec2f,
+        sizeRatio: f32,
         f: f32,
         dt: f32,
+        G: f32,
         cameraPos: vec3f,
-        G: f32
       };
 
       // position and mass buffer
@@ -186,18 +232,36 @@ async function main() {
         // save acceleration for the next time step
         accel[bodyIndex] = newAccel;
       }
-    `
-  })
+    `,
+    label: "compute module"
+  });
+
+  // const computePipeline = device.createComputePipeline({
+  //   layout: 'auto',
+  //   compute: { module: computeModule, entryPoint: 'main' },
+  //   label: "compute pipeline"
+  // });
+
+  // const computeBindGroup = device.createBindGroup({
+  //   layout: computePipeline.getBindGroupLayout(0),
+  //   entries: [
+  //     { binding: 0, resource: { buffer: bodyBuffer } },
+  //     { binding: 1, resource: { buffer: velBuffer } },
+  //     { binding: 2, resource: { buffer: accelBuffer } },
+  //     { binding: 3, resource: { buffer: uniformBuffer } },
+  //   ],
+  //   label: "compute bind group"
+  // });
 
   const renderModule = device.createShaderModule({
     code: `
       struct Uniforms {
         matrix: mat4x4f,
-        sizeRatio: vec2f,
+        cameraPos: vec3f,
+        sizeRatio: f32,
         f: f32,
         dt: f32,
-        cameraPos: vec3f,
-        G: f32
+        G: f32,
       };
 
       struct VSOutput {
@@ -248,7 +312,7 @@ async function main() {
         let up = normalize(cross(right, viewDir));
 
         // offset in local camera-facing plane
-        let worldOffset = (right * uv.x + up * uv.y) * max(radius, 2 * length(viewVec) / uni.f) * uni.sizeRatio.y;
+        let worldOffset = (right * uv.x + up * uv.y) * max(radius, 2 * length(viewVec) / uni.f) * uni.sizeRatio;
 
         // final world position of the quad vertex
         let cornerPos = worldPos + worldOffset;
@@ -280,6 +344,7 @@ async function main() {
         return vec4f(colorMap(vsOut.position.w), 1);
       }
     `,
+    label: "render module"
   });
 
   // const renderBindGroupLayout = device.createBindGroupLayout({
@@ -314,55 +379,10 @@ async function main() {
     },
   });
 
-  const pointData = new Float32Array(randomDiskPoints(
-    vec3.fromValues(0, 0, 0),
-    vec3.fromValues(1, 1, 1), // vec3.fromValues(Math.random(), Math.random(), Math.random()),
-    2 * Math.random() + 2,
-    10000
-  ).concat(randomDiskPoints(
-    vec3.scale(vec3.fromValues(Math.random()-.5, Math.random()-.5, Math.random()-.5), 5),
-    vec3.fromValues(Math.random(), Math.random(), Math.random()),
-    2 * Math.random() + 2,
-    10000
-  )));
-  // createPoints({
-  //   radius: 1,
-  //   numSamples: 1000,
-  // });
-  const kNumPoints = pointData.length / 4;
-
-  const pointBuffer = device.createBuffer({
-    label: 'point buffer',
-    size: pointData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-  });
-  device.queue.writeBuffer(pointBuffer, 0, pointData);
-
-  const uniformValues = new Float32Array(24); // 16 mat + 2 res + 2 f dt + 3 right + 1 g + 3 up
-  const uniformBuffer = device.createBuffer({
-    size: uniformValues.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-  });
-  const kMatrixOffset = 0;
-  const kSizeFactorOffset = 16;
-  const kFOffset = 18;
-  const kDtOffset = 19;
-  const kCamPosOffset = 20;
-  const kGOffset = 23;
-  const uni = {
-    matrixValue: uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16),
-    sizeFactorValue: uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 2),
-    fValue: uniformValues.subarray(kFOffset, kFOffset + 1),
-    dtValue: uniformValues.subarray(kDtOffset, kDtOffset + 1),
-    cameraPosValue: uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3),
-    GValue: uniformValues.subarray(kGOffset, kGOffset + 1),
-  }
-
-
   const renderBindGroup = device.createBindGroup({
     layout: renderPipeline.getBindGroupLayout(0), // renderBindGroupLayout, 
     entries: [
-      { binding: 0, resource: { buffer: pointBuffer } },
+      { binding: 0, resource: { buffer: bodyBuffer } },
       { binding: 1, resource: { buffer: uniformBuffer } },
     ],
   });
@@ -405,22 +425,12 @@ async function main() {
     }
     renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
 
-
-    // Set the matrix in the uniform values
-    uni.matrixValue.set(matrix);
-
-    // Set the f value in the uniform values
-    uni.fValue[0] = fVal;
-    
-    uni.cameraPosValue.set(camera.position);
-
-
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
 
     const encoder = device.createCommandEncoder();
     const pass = encoder.beginRenderPass(renderPassDescriptor);
     pass.setPipeline(renderPipeline);
-    pass.setVertexBuffer(0, pointBuffer);
+    pass.setVertexBuffer(0, bodyBuffer);
     pass.setBindGroup(0, renderBindGroup);
     pass.draw(6, kNumPoints);
     pass.end();
@@ -434,13 +444,12 @@ async function main() {
   window.onresize = () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
-    aspect = canvas.clientWidth / canvas.clientHeight;
-    uni.sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
+    uni.sizeFactorValue.set([1 / sizeFactor]);
     updateMatrix();
   };
 
   updateCameraPosition();
-  uni.sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
+  uni.sizeFactorValue.set([1 / sizeFactor]);
   requestAnimationFrame(render);
 }
 

@@ -7,10 +7,6 @@ const FOV_SPEED = 0.0002;
 
 const minFOV = (10).toRad(), maxFOV = (100).toRad();
 
-const matrix = mat4.create();
-let fVal;
-let aspect;
-
 const defaults = {
   target: vec3.fromValues(0, 0, 0),
   radius: 2,
@@ -44,9 +40,10 @@ function updateMatrix() {
   aspect = canvas.clientWidth / canvas.clientHeight;
   const proj = mat4.perspective(camera.fov, aspect, camera.near, camera.far);
   const view = mat4.lookAt(camera.position, camera.target, camera.worldUp);
-  mat4.multiply(proj, view, matrix);
-  // Set the f value in the uniform values
-  fVal = proj[5];
+  mat4.multiply(proj, view, uni.matrixValue);
+
+  uni.fValue.set([proj[5]]);
+  uni.cameraPosValue.set(camera.position);
 }
 
 // compute position from spherical coords
