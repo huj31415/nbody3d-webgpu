@@ -117,10 +117,12 @@ async function main() {
     code: `
       struct Uniforms {
         matrix: mat4x4f,
-        resolution: vec2f,
+        sizeRatio: vec2f,
         f: f32,
         dt: f32,
-        G: f32
+        // right: vec3f,
+        G: f32,
+        // up: vec3f
       };
 
       // position and mass buffer
@@ -195,7 +197,9 @@ async function main() {
         sizeRatio: vec2f,
         f: f32,
         dt: f32,
-        G: f32
+        // right: vec3f,
+        G: f32,
+        // up: vec3f
       };
 
       struct VSOutput {
@@ -327,11 +331,13 @@ async function main() {
   const kFOffset = 18;
   const kDtOffset = 19;
   const kGOffset = 20;
-  const matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-  const sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 2);
-  const fValue = uniformValues.subarray(kFOffset, kFOffset + 1);
-  const dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
-  const GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
+  const uni = {
+    matrixValue: uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16),
+    sizeFactorValue: uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 2),
+    fValue: uniformValues.subarray(kFOffset, kFOffset + 1),
+    dtValue: uniformValues.subarray(kDtOffset, kDtOffset + 1),
+    GValue: uniformValues.subarray(kGOffset, kGOffset + 1),
+  }
 
 
   const renderBindGroup = device.createBindGroup({
@@ -382,10 +388,10 @@ async function main() {
 
 
     // Set the matrix in the uniform values
-    matrixValue.set(matrix);
+    uni.matrixValue.set(matrix);
 
     // Set the f value in the uniform values
-    fValue[0] = fVal;
+    uni.fValue[0] = fVal;
     // Update the resolution in the uniform values - only when resizing?
 
 
@@ -409,12 +415,12 @@ async function main() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     aspect = canvas.clientWidth / canvas.clientHeight;
-    sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
+    uni.sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
     updateMatrix();
   };
 
   updateCameraPosition();
-  sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
+  uni.sizeFactorValue.set([1 / (sizeFactor * aspect), 1 / sizeFactor]);
   requestAnimationFrame(render);
 }
 
