@@ -1,4 +1,5 @@
 const ROT_SPEED = 0.005;
+const KEY_ROT_MULT = 5;
 const PAN_SPEED = 0.001;
 
 const ZOOM_SPEED = 0.0005;
@@ -96,21 +97,15 @@ canvas.addEventListener('mousemove', e => {
   state.lastX = e.clientX;
   state.lastY = e.clientY;
 
-
   // Orbit
   if (state.orbitActive) {
-    camera.azimuth -= dx * ROT_SPEED;
-    camera.elevation += dy * ROT_SPEED;
-    // clamp elevation to [-89, +89] deg
-    const limit = Math.PI / 2 - 0.01;
-    camera.elevation = (camera.elevation).clamp(-limit, limit);
-    updateCameraPosition();
+    orbitCam(dx, dy);
   }
 
   // Pan within view-plane
   if (state.panActive) {
     // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
-    let adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
+    const adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
     let pan = vec3.scaleAndAdd(
       vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
       camera.viewUp(),
@@ -142,6 +137,16 @@ canvas.addEventListener('wheel', e => {
   updateCameraPosition();
 }, { passive: false });
 
+
+function orbitCam(dx, dy) {
+  camera.azimuth -= dx * ROT_SPEED;
+  camera.elevation += dy * ROT_SPEED;
+  // clamp elevation to [-89, +89] deg
+  const limit = Math.PI / 2 - 0.01;
+  camera.elevation = (camera.elevation).clamp(-limit, limit);
+  updateCameraPosition();
+}
+
 function resetCam() {
   camera.target = defaults.target;
   camera.radius = defaults.radius;
@@ -150,6 +155,7 @@ function resetCam() {
   camera.fov = defaults.fov;
 }
 
+let up = 0, left = 0;
 window.addEventListener("keydown", (e) => {
   switch (e.key) {
     case "Alt":
@@ -160,4 +166,14 @@ window.addEventListener("keydown", (e) => {
       updateCameraPosition();
       break;
   }
+  
+  if (e.key == "ArrowUp") up = 1;
+  else if (e.key == "ArrowDown") up = -1;
+  if (e.key == "ArrowLeft") left = 1;
+  else if (e.key == "ArrowRight") left = -1;
+  orbitCam(left * KEY_ROT_MULT, up * KEY_ROT_MULT);
+});
+window.addEventListener("keyup", (e) => {
+  if (e.key == "ArrowUp" || e.key == "ArrowDown") up = 0;
+  if (e.key == "ArrowLeft" || e.key == "ArrowRight") left = 0;
 });

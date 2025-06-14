@@ -8,7 +8,7 @@ let sizeFactor = window.outerHeight;
 
 const canvas = document.getElementById("canvas");
 
-const getRadius = (mass) => Math.cbrt(mass / (4/3 * Math.PI)) / sizeFactor * 2;
+const getRadius = (mass) => Math.cbrt(mass / (4/3 * Math.PI)) / sizeFactor;
 
 function createPoints({
   numSamples,
@@ -120,9 +120,8 @@ async function main() {
         sizeRatio: vec2f,
         f: f32,
         dt: f32,
-        // right: vec3f,
-        G: f32,
-        // up: vec3f
+        cameraPos: vec3f,
+        G: f32
       };
 
       // position and mass buffer
@@ -197,9 +196,8 @@ async function main() {
         sizeRatio: vec2f,
         f: f32,
         dt: f32,
-        // right: vec3f,
-        G: f32,
-        // up: vec3f
+        cameraPos: vec3f,
+        G: f32
       };
 
       struct VSOutput {
@@ -216,7 +214,6 @@ async function main() {
         @builtin(instance_index) instNdx: u32,
         @builtin(vertex_index) vNdx: u32,
       ) -> VSOutput {
-        var vsOut: VSOutput;
         let body = bodies[instNdx];
 
         let quad = array(
@@ -232,12 +229,32 @@ async function main() {
         //get radius from mass (r = cbrt(mass * 3/4 / pi))
         let radius = pow(body.w / 4.189, 1.0/3.0);
         
-        let clipPos = uni.matrix * vec4f(body.xyz, 1);
+        // billboards parallel to view plane with min size
+        // let clipPos = uni.matrix * vec4f(body.xyz, 1);
+        // // ensure points are at least 2px wide
+        // let clipOffset = vec4f(uv * 2 * uni.sizeRatio * max(clipPos.w, radius * uni.f), 0, 0); // / uni.resolution
+        // vsOut.position = clipPos + clipOffset;
 
-        // ensure points are at least 2px wide
-        let clipOffset = vec4f(uv * 2 * uni.sizeRatio * max(clipPos.w, radius * uni.f), 0, 0); // / uni.resolution
+        // billboards perpendicular to camera
+        
+        let worldPos = body.xyz;
 
-        vsOut.position = clipPos + clipOffset;
+        // compute view vector from camera to particle
+        let viewVec = worldPos - uni.cameraPos;
+        let viewDir = normalize(viewVec);
+
+        // compute billboard basis
+        let right = normalize(cross(viewDir, vec3f(0.0, 1.0, 0.0)));
+        let up = normalize(cross(right, viewDir));
+
+        // offset in local camera-facing plane
+        let worldOffset = (right * uv.x + up * uv.y) * max(radius, 2 * length(viewVec) / uni.f) * uni.sizeRatio.y;
+
+        // final world position of the quad vertex
+        let cornerPos = worldPos + worldOffset;
+
+        var vsOut: VSOutput;
+        vsOut.position = uni.matrix * vec4f(cornerPos, 1.0);
         vsOut.uv = uv;
         vsOut.r = radius;
         return vsOut;
@@ -321,7 +338,7 @@ async function main() {
   });
   device.queue.writeBuffer(pointBuffer, 0, pointData);
 
-  const uniformValues = new Float32Array(24); // 16 mat + 2 res + 4 + 2pad 
+  const uniformValues = new Float32Array(24); // 16 mat + 2 res + 2 f dt + 3 right + 1 g + 3 up
   const uniformBuffer = device.createBuffer({
     size: uniformValues.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
@@ -330,12 +347,14 @@ async function main() {
   const kSizeFactorOffset = 16;
   const kFOffset = 18;
   const kDtOffset = 19;
-  const kGOffset = 20;
+  const kCamPosOffset = 20;
+  const kGOffset = 23;
   const uni = {
     matrixValue: uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16),
     sizeFactorValue: uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 2),
     fValue: uniformValues.subarray(kFOffset, kFOffset + 1),
     dtValue: uniformValues.subarray(kDtOffset, kDtOffset + 1),
+    cameraPosValue: uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3),
     GValue: uniformValues.subarray(kGOffset, kGOffset + 1),
   }
 
@@ -392,7 +411,8 @@ async function main() {
 
     // Set the f value in the uniform values
     uni.fValue[0] = fVal;
-    // Update the resolution in the uniform values - only when resizing?
+    
+    uni.cameraPosValue.set(camera.position);
 
 
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
