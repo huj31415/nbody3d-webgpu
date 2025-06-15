@@ -1,24 +1,27 @@
 const ROT_SPEED = 0.005;
-const KEY_ROT_MULT = 5;
 const PAN_SPEED = 0.001;
-
 const ZOOM_SPEED = 0.0005;
 const FOV_SPEED = 0.0002;
+
+const KEY_ROT_SPEED = 3;
+const KEY_PAN_SPEED = 5;
+const KEY_ZOOM_SPEED = 0.01;
+const KEY_FOV_SPEED = 0.005;
 
 const minFOV = (10).toRad(), maxFOV = (100).toRad();
 
 const defaults = {
   target: vec3.fromValues(0, 0, 0),
-  radius: 2,
+  radius: 5,
   position: vec3.create(),
   azimuth: 0,
   elevation: 0,
   fov: (60).toRad(),
   near: 0.1,
-  far: 1000,
+  far: 1e5,
 }
 
-// camera state
+// camera state and interaction
 const camera = {
   // spherical coords around target:
   target: defaults.target,
@@ -26,6 +29,7 @@ const camera = {
   position: defaults.position,
   azimuth: defaults.azimuth,               // horizontal angle, radians
   elevation: defaults.elevation,             // vertical angle, radians
+
   // for projection:
   fov: defaults.fov,
   near: defaults.near,
@@ -34,6 +38,52 @@ const camera = {
   viewDir: () => vec3.normalize(vec3.subtract(camera.target, camera.position)),
   viewRight: () => vec3.normalize(vec3.cross(camera.viewDir(), camera.worldUp)),
   viewUp: () => vec3.normalize(vec3.cross(camera.viewRight(), camera.viewDir())),
+
+  // interaction:
+  orbit: (dx, dy) => {
+    camera.azimuth -= dx * ROT_SPEED;
+    camera.elevation += dy * ROT_SPEED;
+    // clamp elevation to [-89, +89] deg
+    const limit = Math.PI / 2 - 0.01;
+    camera.elevation = (camera.elevation).clamp(-limit, limit);
+    updateCameraPosition();
+  },
+  pan: (dx, dy) => {
+    // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
+    const adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
+    const pan = vec3.scaleAndAdd(
+      vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
+      camera.viewUp(),
+      dy * adjustedPanSpeed
+    );
+    camera.target = vec3.add(camera.target, pan);
+    camera.position = vec3.add(camera.position, pan);
+    updateMatrix();
+  },
+  zoom: (delta) => {
+    camera.radius = ((delta + 1) * camera.radius).clamp(camera.near, camera.far);
+    updateCameraPosition();
+  },
+  adjFOV: (delta) => {
+    camera.fov = (camera.fov + delta).clamp(minFOV, maxFOV);
+    updateCameraPosition();
+  },
+  adjFOVWithoutZoom: (delta) => {
+    const initial = Math.tan(camera.fov / 2) * camera.radius;
+    camera.fov = (camera.fov + delta).clamp(minFOV, maxFOV);
+    camera.radius = initial / Math.tan(camera.fov / 2);
+    updateCameraPosition();
+  },
+  reset: (e = { altKey: false, ctrlKey: false }) => {
+    camera.fov = defaults.fov;
+    if (!e.ctrlKey) camera.radius = defaults.radius;
+    if (!e.altKey && !e.ctrlKey) {
+      camera.azimuth = defaults.azimuth;
+      camera.elevation = defaults.elevation;
+      camera.target = defaults.target;
+    }
+    updateCameraPosition();
+  }
 };
 
 function updateMatrix() {
@@ -71,14 +121,7 @@ canvas.addEventListener('mousedown', e => {
   if (e.button === 0) state.orbitActive = true; // left click to orbit
   if (e.button === 2) state.panActive = true;   // right click to pan
   if (e.button === 1) {
-    if (e.ctrlKey) {
-      camera.fov = defaults.fov;
-    } else if (e.altKey) {
-      camera.radius = defaults.radius;
-      camera.fov = defaults.fov;
-    } else {
-      resetCam();
-    }
+    camera.reset(e);
     updateCameraPosition();
   }
   state.lastX = e.clientX;
@@ -95,14 +138,10 @@ canvas.addEventListener('mousemove', e => {
   state.lastY = e.clientY;
 
   // Orbit
-  if (state.orbitActive) {
-    orbitCam(dx, dy);
-  }
+  if (state.orbitActive) camera.orbit(dx, dy);
 
   // Pan within view-plane
-  if (state.panActive) {
-    panCam(dx, dy)
-  }
+  if (state.panActive) camera.pan(dx, dy);
 });
 
 canvas.addEventListener('wheel', e => {
@@ -110,72 +149,79 @@ canvas.addEventListener('wheel', e => {
 
   if (e.altKey) {
     // adjust FOV without zoom
-    const initial = Math.tan(camera.fov / 2) * camera.radius;
-    camera.fov = (camera.fov + e.deltaY * FOV_SPEED).clamp(minFOV, maxFOV);
-    camera.radius = initial / Math.tan(camera.fov / 2);
+    camera.adjFOVWithoutZoom(e.deltaY * FOV_SPEED)
   } else if (e.ctrlKey) {
     // FOV zoom only
-    camera.fov = (camera.fov + e.deltaY * FOV_SPEED).clamp(minFOV, maxFOV);
+    camera.adjFOV(e.deltaY * FOV_SPEED);
   } else {
     // Zoom only - move camera in/out
-    camera.radius = (camera.radius + e.deltaY * ZOOM_SPEED * (camera.radius)).clamp(camera.near, camera.far);
+    camera.zoom(e.deltaY * ZOOM_SPEED);
   }
-  updateCameraPosition();
 }, { passive: false });
 
+let orbup = false, orbdown = false, orbleft = false, orbright = false;
+let panup = false, pandown = false, panleft = false, panright = false;
+let zoomin = false, zoomout = false;
+let keyOrbit = false, keyPan = false, keyZoom = false, keyFOV = false, keyFOVWithoutZoom = false;
 
-function orbitCam(dx, dy) {
-  camera.azimuth -= dx * ROT_SPEED;
-  camera.elevation += dy * ROT_SPEED;
-  // clamp elevation to [-89, +89] deg
-  const limit = Math.PI / 2 - 0.01;
-  camera.elevation = (camera.elevation).clamp(-limit, limit);
-  updateCameraPosition();
+function keyCamera(e, val) {
+  if (["w", "a", "s", "d", "f", "c"].includes(e.key) || e.key.includes("Arrow"))
+    e.preventDefault();
+
+  switch (e.key) {
+    case "ArrowUp":
+      orbup = val;
+      break;
+    case "w":
+      panup = val;
+      break;
+    case "ArrowDown":
+      orbdown = val;
+      break;
+    case "s":
+      pandown = val;
+      break;
+    case "ArrowLeft":
+      orbleft = val;
+      break;
+    case "a":
+      panleft = val;
+      break;
+    case "ArrowRight":
+      orbright = val;
+      break;
+    case "d":
+      panright = val;
+      break;
+    case "f":
+      zoomin = val;
+      break;
+    case "c":
+      zoomout = val;
+      break;
+  }
+
+  const zoom = zoomin || zoomout;
+
+  keyOrbit = orbup || orbdown || orbleft || orbright;
+  keyPan = panup || pandown || panleft || panright;
+  keyZoom = !(e.ctrlKey || e.altKey) && zoom;
+  keyFOV = e.ctrlKey && zoom;
+  keyFOVWithoutZoom = e.altKey && zoom;
 }
-
-function panCam(dx, dy) {
-  // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
-  const adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
-  const pan = vec3.scaleAndAdd(
-    vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
-    camera.viewUp(),
-    dy * adjustedPanSpeed
-  );
-
-  // apply to target and camera position
-  camera.target = vec3.add(camera.target, pan);
-  camera.position = vec3.add(camera.position, pan);
-  updateMatrix();
-}
-
-function resetCam() {
-  camera.target = defaults.target;
-  camera.radius = defaults.radius;
-  camera.azimuth = defaults.azimuth;
-  camera.elevation = defaults.elevation;
-  camera.fov = defaults.fov;
-}
-
-let up = 0, left = 0;
 window.addEventListener("keydown", (e) => {
+  console.log(e.key);
   switch (e.key) {
     case "Alt":
       e.preventDefault();
       break;
-    case "Home":
-      resetCam();
-      updateCameraPosition();
+    case " ":
+      camera.reset(e);
       break;
   }
-  
-  if (e.key == "ArrowUp") up = 1;
-  else if (e.key == "ArrowDown") up = -1;
-  if (e.key == "ArrowLeft") left = 1;
-  else if (e.key == "ArrowRight") left = -1;
 
-  if (e.key.includes("Arrow")) (e.shiftKey ? panCam : orbitCam) (left * KEY_ROT_MULT, up * KEY_ROT_MULT);
+  keyCamera(e, true);
 });
 window.addEventListener("keyup", (e) => {
-  if (e.key == "ArrowUp" || e.key == "ArrowDown") up = 0;
-  if (e.key == "ArrowLeft" || e.key == "ArrowRight") left = 0;
+  keyCamera(e, false);
 });

@@ -13,7 +13,7 @@ const canvas = document.getElementById("canvas");
 
 const uni = {};
 
-const massToRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI)) / sizeFactor;
+const massToRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI));
 const randRange = (min, max) => Math.random() * (max - min) + min;
 const randMax = (max) => Math.random() * max;
 
@@ -53,6 +53,8 @@ function createPoints({
 function generateGalaxy(list) {
   const pos = [];
   const vel = [];
+  const CoM = vec3.create();
+  let totalMass = 0;
 
   list.forEach(config => {
     const [center, centerV, normal, radius, count] = config;
@@ -60,10 +62,14 @@ function generateGalaxy(list) {
     const cMass = 1e7;
     const maxOuterMass = 100;
     const minOuterMass = 10;
-    const cRadius = massToRadius(cMass) * 1.5 + massToRadius(maxOuterMass);
+    const cRadius = (massToRadius(cMass) * 1.5 + massToRadius(maxOuterMass)) / sizeFactor;
     pos.push(...center);
     pos.push(cMass); // mass
-    vel.push(...centerV, massToRadius(cMass) * sizeFactor);
+    vel.push(...centerV, massToRadius(cMass));
+
+    totalMass += cMass;
+    vec3.add(CoM, vec3.scale(center, cMass), CoM);
+
 
     // 1) normalize the normal
     const n = vec3.normalize(normal);
@@ -98,8 +104,11 @@ function generateGalaxy(list) {
       const vPos = vec3.scale(v, Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.sin(theta));
 
       // world position = center + offset_u + offset_v
-      pos.push(...vec3.add(vec3.add(center, wPos), vec3.add(uPos, vPos)));
+      const uvw = vec3.add(vec3.add(center, wPos), vec3.add(uPos, vPos));
+      pos.push(...uvw);
       pos.push(mass); // mass
+      vec3.add(CoM, vec3.scale(uvw, mass), CoM);
+      totalMass += mass;
 
       // tangent angle
       const tangent = theta + Math.PI / 2;
@@ -111,10 +120,13 @@ function generateGalaxy(list) {
       const uVel = vec3.scale(u, tangentX);
       const vVel = vec3.scale(v, tangentY);
 
-      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), massToRadius(mass) * sizeFactor);
+      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), massToRadius(mass));
       // vel.push(0, 0, 0, 0);
     }
+    camera.target = defaults.target = vec3.scale(CoM, 1 / totalMass);
   });
+
+  CoM
 
   return [new Float32Array(pos), new Float32Array(vel)];
 }
@@ -145,7 +157,7 @@ async function main() {
     [
       [0, 0, 0],
       // [0, 0, 0],
-      [randRange(-1,1), randRange(-1,1), randRange(-1,1)],
+      [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
       // [1, 1, 1],
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
@@ -153,7 +165,7 @@ async function main() {
     ],
     [
       [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
-      [randRange(-1,1), randRange(-1,1), randRange(-1,1)],
+      [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       10000
@@ -364,6 +376,7 @@ async function main() {
 
         // offset in local camera-facing plane
         let worldOffset = (right * uv.x + up * uv.y) * max(radius, 2 * length(viewVec) / uni.f) * uni.sizeRatio;
+        // let worldOffset = (right * uv.x + up * uv.y) * radius * uni.sizeRatio;
 
         // final world position of the quad vertex
         let cornerPos = worldPos + worldOffset;
@@ -383,12 +396,11 @@ async function main() {
         // circle SDF
         let dist = length(vsOut.uv) - 1;
         if (dist > 0.0) { discard; }
-        if (dist > -0.5 / vel[vsOut.index].w) { return vec4f(0); }
-        // return vec4f(colorMap(vsOut.position.w), 1);
+        // if (dist > -0.5 / vel[vsOut.index].w) { return vec4f(0); } // black border around circles
+        // return vec4f(colorMap(vsOut.position.w), 1); // color by distance to camera
 
-        let c = length(vel[vsOut.index].xyz);
-        return vec4f(colorMap(c / 40f), 1);
-        // if (c > 0) { return vec4f(1,0,0,1); } else {return vec4f(0,0,1,1);}
+        return vec4f(colorMap(length(vel[vsOut.index].xyz) / 40f), 1); // color by magnitude
+        // return vec4f(normalize(vel[vsOut.index].xyz) / 2 + vec3f(0.5), 1); // color by direction
       }
     `,
     label: "render module"
@@ -454,6 +466,12 @@ async function main() {
   let depthTexture;
 
   function render(time) {
+    if (keyOrbit) camera.orbit((orbleft - orbright) * KEY_ROT_SPEED, (orbup - orbdown) * KEY_ROT_SPEED);
+    if (keyPan) camera.pan((panleft - panright) * KEY_PAN_SPEED, (panup - pandown) * KEY_PAN_SPEED);
+    if (keyZoom) camera.zoom((zoomout - zoomin) * KEY_ZOOM_SPEED);
+    if (keyFOV) camera.adjFOV((zoomout - zoomin) * KEY_FOV_SPEED);
+    if (keyFOVWithoutZoom) camera.adjFOVWithoutZoom((zoomout - zoomin) * KEY_FOV_SPEED);
+
     const canvasTexture = context.getCurrentTexture();
     renderPassDescriptor.colorAttachments[0].view = canvasTexture.createView();
 
