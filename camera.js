@@ -101,18 +101,7 @@ canvas.addEventListener('mousemove', e => {
 
   // Pan within view-plane
   if (state.panActive) {
-    // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
-    const adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
-    let pan = vec3.scaleAndAdd(
-      vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
-      camera.viewUp(),
-      dy * adjustedPanSpeed
-    );
-
-    // apply to target and camera position
-    camera.target = vec3.add(camera.target, pan);
-    camera.position = vec3.add(camera.position, pan);
-    updateMatrix();
+    panCam(dx, dy)
   }
 });
 
@@ -144,6 +133,21 @@ function orbitCam(dx, dy) {
   updateCameraPosition();
 }
 
+function panCam(dx, dy) {
+  // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
+  const adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
+  const pan = vec3.scaleAndAdd(
+    vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
+    camera.viewUp(),
+    dy * adjustedPanSpeed
+  );
+
+  // apply to target and camera position
+  camera.target = vec3.add(camera.target, pan);
+  camera.position = vec3.add(camera.position, pan);
+  updateMatrix();
+}
+
 function resetCam() {
   camera.target = defaults.target;
   camera.radius = defaults.radius;
@@ -168,7 +172,8 @@ window.addEventListener("keydown", (e) => {
   else if (e.key == "ArrowDown") up = -1;
   if (e.key == "ArrowLeft") left = 1;
   else if (e.key == "ArrowRight") left = -1;
-  orbitCam(left * KEY_ROT_MULT, up * KEY_ROT_MULT);
+  
+  if (e.key.includes("Arrow")) (e.shiftKey ? panCam : orbitCam) (left * KEY_ROT_MULT, up * KEY_ROT_MULT);
 });
 window.addEventListener("keyup", (e) => {
   if (e.key == "ArrowUp" || e.key == "ArrowDown") up = 0;
