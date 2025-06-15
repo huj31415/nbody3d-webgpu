@@ -4,7 +4,7 @@ let adapter, device;
 
 const TILE_SIZE = 256;
 
-let G = .0001;
+let G = 0.0001;
 let dt = 0.0001;
 
 let sizeFactor = window.outerHeight;
@@ -13,7 +13,9 @@ const canvas = document.getElementById("canvas");
 
 const uni = {};
 
-const getRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI)) / sizeFactor;
+const massToRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI)) / sizeFactor;
+const randRange = (min, max) => Math.random() * (max - min) + min;
+const randMax = (max) => Math.random() * max;
 
 function createPoints({
   numSamples,
@@ -35,19 +37,20 @@ function createPoints({
 }
 
 /**
- * Generates N random points uniformly distributed inside
+ * Generates N random points distributed inside
  * the disk of given radius, centered at `center`, whose
  * plane is oriented by `normal`.
  * 
  * Pass arguments as a list of lists of args, eg. [[center, norm, r, cnt], [center, norm, r, cnt]]
  *
  * @param {vec3} center  vec3 representing the center [cx,cy,cz]
+ * @param {vec3} centerV  vec3 representing the velocity of the galaxy [vx,vy,vz]
  * @param {vec3} normal  vec3 representing the normal [nx,ny,nz] (need not be unit)
  * @param {number} radius  Disk radius
  * @param {number} count  Number of points
  * @returns {Array}  Packed coords and masses [x,y,z,m x,y,z,m ...]
  */
-function randomDiskPoints(list) {
+function generateGalaxy(list) {
   const pos = [];
   const vel = [];
 
@@ -56,10 +59,11 @@ function randomDiskPoints(list) {
 
     const cMass = 1e7;
     const maxOuterMass = 100;
-    const cRadius = getRadius(cMass) * 2 + getRadius(maxOuterMass);
+    const minOuterMass = 10;
+    const cRadius = massToRadius(cMass) * 1.5 + massToRadius(maxOuterMass);
     pos.push(...center);
     pos.push(cMass); // mass
-    vel.push(...centerV, 0);
+    vel.push(...centerV, massToRadius(cMass) * sizeFactor);
 
     // 1) normalize the normal
     const n = vec3.normalize(normal);
@@ -75,29 +79,31 @@ function randomDiskPoints(list) {
 
     // 3) sample points
     for (let i = 0; i < count; i++) {
+      const mass = randRange(minOuterMass, maxOuterMass);
       // random radius is proportional sqrt(U) for uniform distribution
-      const t = Math.random();
-      const r = t * Math.sqrt(t) * radius + cRadius;
+      const t = Math.sqrt(Math.random());
+      const exp = 2;
+      // const r = t ** exp * (radius - cRadius) + cRadius;
+      const r = (cRadius + radius * (2 ** (-exp * (t - 1)) - 1) / (2 ** exp - 1)); // t -> i/count
       // random angle
-      const theta = Math.random() * 2 * Math.PI;
+      const theta = randRange(0, 2 * Math.PI);
+      // const arms = 5, clockwise = true;
+      // const theta = (i * Math.PI * (2 / arms + Math.sign(clockwise - 0.5) * Math.PI / count)) * randRange(1, 1.0001);
 
       // normal component for thickness
-      const wPos = vec3.scale(n, (Math.random() - 0.5) / 10 * (1 / (10 * (r / radius) ** 2 + 1)));
+      const wPos = vec3.scale(n, randRange(-.1, .1) * (1 / (10 * (r / radius) ** 2 + 1)));
 
       // local offset = u*(r*cos theta) + v*(r*sin theta)
-      const x = Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.cos(theta);
-      const y = Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.sin(theta);
-
-      const uPos = vec3.scale(u, x);
-      const vPos = vec3.scale(v, y);
+      const uPos = vec3.scale(u, Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.cos(theta));
+      const vPos = vec3.scale(v, Math.sqrt(r * r - vec3.length(wPos) ** 2) * Math.sin(theta));
 
       // world position = center + offset_u + offset_v
       pos.push(...vec3.add(vec3.add(center, wPos), vec3.add(uPos, vPos)));
-      pos.push(Math.random() * maxOuterMass); // mass
+      pos.push(mass); // mass
 
       // tangent angle
       const tangent = theta + Math.PI / 2;
-      let speed = Math.sqrt(G * cMass / r);
+      const speed = Math.sqrt(G * (cMass) / r);
 
       const tangentX = speed * Math.cos(tangent);
       const tangentY = speed * Math.sin(tangent);
@@ -105,7 +111,7 @@ function randomDiskPoints(list) {
       const uVel = vec3.scale(u, tangentX);
       const vVel = vec3.scale(v, tangentY);
 
-      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), 0);
+      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), massToRadius(mass) * sizeFactor);
       // vel.push(0, 0, 0, 0);
     }
   });
@@ -135,18 +141,19 @@ async function main() {
     format: swapChainFormat,
   });
 
-  const [bodyData, velData] = randomDiskPoints([
+  const [bodyData, velData] = generateGalaxy([
     [
       [0, 0, 0],
       // [0, 0, 0],
-      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 5),
-      [1, 1, 1], // vec3.fromValues(Math.random(), Math.random(), Math.random()),
+      [randRange(-1,1), randRange(-1,1), randRange(-1,1)],
+      // [1, 1, 1],
+      [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       20000
     ],
     [
-      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 10),
-      vec3.scale([Math.random() - .5, Math.random() - .5, Math.random() - .5], 5),
+      [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
+      [randRange(-1,1), randRange(-1,1), randRange(-1,1)],
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       10000
@@ -318,12 +325,11 @@ async function main() {
       struct VSOutput {
         @builtin(position) position: vec4f,
         @location(0) uv: vec2f,
-        @location(1) r: f32,
-        @location(2) @interpolate(flat) index: u32,
+        @location(1) @interpolate(flat) index: u32,
       };
 
       @group(0) @binding(0) var<storage, read> bodies: array<vec4f>;
-      @group(0) @binding(1) var<storage, read> accel: array<vec4f>;
+      @group(0) @binding(1) var<storage, read> vel: array<vec4f>;
       @group(0) @binding(2) var<uniform> uni: Uniforms;
 
       
@@ -344,7 +350,7 @@ async function main() {
         let uv = quad[vNdx];
 
         //get radius from mass (r = cbrt(mass * 3/4 / pi))
-        let radius = pow(body.w / 4.189, 1.0/3.0);
+        let radius = vel[instNdx].w; //pow(body.w / 4.189, 1.0/3.0);
         
         let worldPos = body.xyz;
 
@@ -365,7 +371,6 @@ async function main() {
         var vsOut: VSOutput;
         vsOut.position = uni.matrix * vec4f(cornerPos, 1.0);
         vsOut.uv = uv;
-        vsOut.r = radius;
         vsOut.index = instNdx;
         return vsOut;
       }
@@ -378,10 +383,10 @@ async function main() {
         // circle SDF
         let dist = length(vsOut.uv) - 1;
         if (dist > 0.0) { discard; }
-        if (dist > -0.5 / vsOut.r) { return vec4f(0); }
+        if (dist > -0.5 / vel[vsOut.index].w) { return vec4f(0); }
         // return vec4f(colorMap(vsOut.position.w), 1);
 
-        let c = length(accel[vsOut.index]);
+        let c = length(vel[vsOut.index].xyz);
         return vec4f(colorMap(c / 40f), 1);
         // if (c > 0) { return vec4f(1,0,0,1); } else {return vec4f(0,0,1,1);}
       }

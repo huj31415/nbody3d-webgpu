@@ -172,7 +172,7 @@ window.addEventListener("keydown", (e) => {
   else if (e.key == "ArrowDown") up = -1;
   if (e.key == "ArrowLeft") left = 1;
   else if (e.key == "ArrowRight") left = -1;
-  
+
   if (e.key.includes("Arrow")) (e.shiftKey ? panCam : orbitCam) (left * KEY_ROT_MULT, up * KEY_ROT_MULT);
 });
 window.addEventListener("keyup", (e) => {
