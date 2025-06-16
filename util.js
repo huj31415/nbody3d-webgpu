@@ -13,7 +13,10 @@ const uiIDs = [
   "camAlt",
   "camAz",
   "toggleSim",
-  "restartSim"
+  "restartSim",
+  "export",
+  "import",
+  "bufferInput"
 ];
 
 const ui = {};
@@ -67,7 +70,7 @@ let jsTime = 0, lastFrameTime = performance.now(), deltaTime = 10, fps = 0;
 window.onresize = () => {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  updateMatrix();
+  camera.updateMatrix();
 };
 
 Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
@@ -97,6 +100,87 @@ function createPoints({
   }
   return new Float32Array(vertices);
 }
+
+async function exportBuffers(device, bodyBuffer, velBuffer, accelBuffer, count) {
+  const buffers = [bodyBuffer, velBuffer, accelBuffer];
+  const bufferNames = ["bodies", "vel", "accel"];
+  const floatSize = 4;
+  const vec4Size = 4 * floatSize;
+  const totalBytes = count * vec4Size;
+
+  const readBuffers = await Promise.all(buffers.map(async (gpuBuffer, i) => {
+    // Create staging buffer
+    const stagingBuffer = device.createBuffer({
+      size: totalBytes,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+    });
+
+    // Copy GPU buffer to staging buffer
+    const encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(gpuBuffer, 0, stagingBuffer, 0, totalBytes);
+    device.queue.submit([encoder.finish()]);
+
+    // Wait for it to be ready
+    await stagingBuffer.mapAsync(GPUMapMode.READ);
+    const arrayBuffer = stagingBuffer.getMappedRange();
+    const data = new Float32Array(arrayBuffer.slice(0));
+    stagingBuffer.unmap();
+
+    return { name: bufferNames[i], data };
+  }));
+
+  // Format as JSON
+  const output = {};
+  for (const { name, data } of readBuffers) {
+    output[name] = Array.from(data);
+  }
+
+  const blob = new Blob([JSON.stringify(output)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "simulation_data.json";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+async function importBuffers(device, file, bodyBuffer, velBuffer, accelBuffer) {
+  const text = await file.text();
+  const json = JSON.parse(text);
+
+  const buffers = [
+    { name: "bodies", gpu: bodyBuffer },
+    { name: "vel", gpu: velBuffer },
+    { name: "accel", gpu: accelBuffer },
+  ];
+
+  for (const { name, gpu } of buffers) {
+    const data = new Float32Array(json[name]);
+    const upload = device.createBuffer({
+      size: data.byteLength,
+      usage: GPUBufferUsage.COPY_SRC,
+      mappedAtCreation: true,
+    });
+
+    new Float32Array(upload.getMappedRange()).set(data);
+    upload.unmap();
+
+    const encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(upload, 0, gpu, 0, data.byteLength);
+    device.queue.submit([encoder.finish()]);
+  }
+}
+
+ui.export.addEventListener("click", () => exportBuffers(device, bodyBuffer, velBuffer, accelBuffer, nBodies));
+
+ui.import.addEventListener("click", () => {
+  const file = ui.bufferInput.files[0];
+  if (file) importBuffers(device, file, bodyBuffer, velBuffer, accelBuffer);
+  ui.bufferInput.value = null;
+  defaults.target = vec3.fromValues(0,0,0);
+  camera.reset();
+});
+
 
 
 /*
@@ -176,6 +260,13 @@ class vec3 {
     if (len > 0) {
       out = this.scale(a, 1 / len);
     }
+    return out;
+  }
+
+  static clone(a, out = this.create()) {
+    out[0] = a[0];
+    out[1] = a[1];
+    out[2] = a[2];
     return out;
   }
 

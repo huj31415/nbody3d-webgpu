@@ -49,6 +49,7 @@ select {
 .halfWidth {
   display: inline-block;
   width: 140px;
+  overflow: hidden;
   /* margin: 2px; */
   /* border: 1px solid #d8d7d5; */
 }

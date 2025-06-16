@@ -23,20 +23,15 @@
     <div class="control-group">
       <b>Camera state</b>
       <br>
-      <span class="halfWidth">
-        FOV: <span id="camFOV"></span>&deg;
-        <br>
-        Dst: <span id="camDist"></span>
-        <br>
-        Tgt: <span id="camTarget"></span>
-      </span>
-      <span class="halfWidth">
-        Pos: <span id="camPos"></span>
-        <br>
-        Alt: <span id="camAlt"></span>&deg;
-        <br>
-        Az: <span id="camAz"></span>&deg;
-      </span>
+      FOV: <span id="camFOV"></span>&deg;
+      <br>
+      Dst: <span id="camDist"></span>
+      <br>
+      Tgt: <span id="camTarget"></span>
+      <br>
+      Pos: <span id="camPos"></span>
+      <br>
+      Alt/az: <span id="camAlt"></span>&deg;, <span id="camAz"></span>&deg;
     </div>
     <hr>
     <div class="control-group">
@@ -57,26 +52,39 @@
           <span id="simSpeedValue">10</span>
         </label> -->
       </div>
-      <button id="toggleSim">Play / Pause</button>
-      <button id="restartSim">Regenerate</button>
+      <div>
+        <button id="toggleSim">Play / Pause</button>
+        <button id="restartSim">Regenerate</button>
+      </div>
+    </div>
+    <hr>
+    <div class="control-group">
+      <b>Import/export sim state</b>
+      <div>
+        <input type="file" id="bufferInput">
+      </div>
+      <div>
+        <button id="export">Export</button>
+        <button id="import">Import</button>
+      </div>
     </div>
     <hr>
     <div class="control-group">
       <b>Camera controls:</b>
       <div>
-      Orbit: leftclick / arrows
-      <br>
-      Pan: rightclick / wasd
-      <br>
-      Zoom: scroll / fc
-      <br>
-      FOV zoom: ctrl+scroll / ctrl+fc
-      <br>
-      FOV: alt+scroll / alt+fc
-      <br>
-      Reset view: middleclick / space
-      <br>
-      Reset FOV: ctrl+middleclick / ctrl+space
+        Orbit: leftclick / arrows
+        <br>
+        Pan: rightclick / wasd
+        <br>
+        Zoom: scroll / fc
+        <br>
+        FOV zoom: ctrl+scroll / ctrl+fc
+        <br>
+        FOV: alt+scroll / alt+fc
+        <br>
+        Reset view: middleclick / space
+        <br>
+        Reset FOV: ctrl+middleclick / ctrl+space
       </div>
     </div>
     <p></p>

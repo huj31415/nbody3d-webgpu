@@ -22,95 +22,112 @@ const defaults = {
 }
 
 // camera state and interaction
-const camera = {
-  // spherical coords around target:
-  target: defaults.target,
-  radius: defaults.radius,
-  position: defaults.position,
-  azimuth: defaults.azimuth,               // horizontal angle, radians
-  elevation: defaults.elevation,             // vertical angle, radians
+class Camera {
+  constructor(defaults) {
+    this.target = vec3.clone(defaults.target);
+    this.radius = defaults.radius;
+    this.position = vec3.clone(defaults.position);
+    this.azimuth = defaults.azimuth;
+    this.elevation = defaults.elevation;
 
-  // for projection:
-  fov: defaults.fov,
-  near: defaults.near,
-  far: defaults.far,
-  worldUp: vec3.fromValues(0, 1, 0),
-  viewDir: () => vec3.normalize(vec3.subtract(camera.target, camera.position)),
-  viewRight: () => vec3.normalize(vec3.cross(camera.viewDir(), camera.worldUp)),
-  viewUp: () => vec3.normalize(vec3.cross(camera.viewRight(), camera.viewDir())),
+    this.fov = defaults.fov;
+    this.near = defaults.near;
+    this.far = defaults.far;
 
-  updatePosition: () => {
-    const x = Math.cos(camera.elevation) * Math.sin(camera.azimuth);
-    const y = Math.sin(camera.elevation);
-    const z = Math.cos(camera.elevation) * Math.cos(camera.azimuth);
-    camera.position = vec3.scaleAndAdd(camera.target, [x, y, z], camera.radius);//vec3.fromValues(T[0] + x, T[1] + y, T[2] + z);
-    updateMatrix();
+    this.worldUp = vec3.fromValues(0, 1, 0);
+    this.updatePosition();
+  }
 
-    ui.camFOV.textContent = camera.fov.toDeg().toFixed(2);
-    ui.camDist.textContent = camera.radius.toFixed(2);
-    ui.camTarget.textContent = vec3.toString(camera.target);
-    ui.camPos.textContent = vec3.toString(camera.position);
-    ui.camAlt.textContent = camera.elevation.toDeg().toFixed(2);
-    ui.camAz.textContent = camera.azimuth.toDeg().toFixed(2);
-  },
+  get viewDir() {
+    return vec3.normalize(vec3.subtract(this.target, this.position));
+  }
 
-  // interaction:
-  orbit: (dx, dy) => {
-    camera.azimuth -= dx * ROT_SPEED;
-    camera.elevation += dy * ROT_SPEED;
-    // clamp elevation to [-89, +89] deg
+  get viewRight() {
+    return vec3.normalize(vec3.cross(this.viewDir, this.worldUp));
+  }
+
+  get viewUp() {
+    return vec3.normalize(vec3.cross(this.viewRight, this.viewDir));
+  }
+
+
+  updateMatrix() {
+    const aspect = canvas.clientWidth / canvas.clientHeight;
+    const proj = mat4.perspective(this.fov, aspect, this.near, this.far);
+    const view = mat4.lookAt(this.position, this.target, this.worldUp);
+    mat4.multiply(proj, view, uni.matrixValue);
+
+    uni.fValue.set([proj[5]]);
+    uni.sizeFactorValue.set([1 / sizeFactor]);
+    uni.cameraPosValue.set(this.position);
+  }
+
+  updatePosition() {
+    const x = Math.cos(this.elevation) * Math.sin(this.azimuth);
+    const y = Math.sin(this.elevation);
+    const z = Math.cos(this.elevation) * Math.cos(this.azimuth);
+    this.position = vec3.scaleAndAdd(this.target, [x, y, z], this.radius);
+
+    this.updateMatrix();
+
+    ui.camFOV.textContent = this.fov.toDeg().toFixed(2);
+    ui.camDist.textContent = this.radius.toFixed(2);
+    ui.camTarget.textContent = vec3.toString(this.target);
+    ui.camPos.textContent = vec3.toString(this.position);
+    ui.camAlt.textContent = this.elevation.toDeg().toFixed(2);
+    ui.camAz.textContent = this.azimuth.toDeg().toFixed(2);
+  }
+
+  orbit(dx, dy) {
+    this.azimuth -= dx * ROT_SPEED;
+    this.elevation += dy * ROT_SPEED;
+
     const limit = Math.PI / 2 - 0.01;
-    camera.elevation = (camera.elevation).clamp(-limit, limit);
-    camera.updatePosition();
-  },
-  pan: (dx, dy) => {
-    // pan delta = (-right * dx + upReal * dy) * PAN_SPEED
-    const adjustedPanSpeed = PAN_SPEED * camera.radius * camera.fov;
+    this.elevation = this.elevation.clamp(-limit, limit);
+    this.updatePosition();
+  }
+
+  pan(dx, dy) {
+    const adjustedPanSpeed = PAN_SPEED * this.radius * this.fov;
     const pan = vec3.scaleAndAdd(
-      vec3.scale(camera.viewRight(), -dx * adjustedPanSpeed),
-      camera.viewUp(),
+      vec3.scale(this.viewRight, -dx * adjustedPanSpeed),
+      this.viewUp,
       dy * adjustedPanSpeed
     );
-    camera.target = vec3.add(camera.target, pan);
-    camera.position = vec3.add(camera.position, pan);
-    camera.updatePosition();
-  },
-  zoom: (delta) => {
-    camera.radius = ((delta + 1) * camera.radius).clamp(camera.near, camera.far);
-    camera.updatePosition();
-  },
-  adjFOV: (delta) => {
-    camera.fov = (camera.fov + delta).clamp(minFOV, maxFOV);
-    camera.updatePosition();
-  },
-  adjFOVWithoutZoom: (delta) => {
-    const initial = Math.tan(camera.fov / 2) * camera.radius;
-    camera.fov = (camera.fov + delta).clamp(minFOV, maxFOV);
-    camera.radius = initial / Math.tan(camera.fov / 2);
-    camera.updatePosition();
-  },
-  reset: (e = { altKey: false, ctrlKey: false }) => {
-    camera.fov = defaults.fov;
-    if (!e.ctrlKey) camera.radius = defaults.radius;
-    if (!e.altKey && !e.ctrlKey) {
-      camera.azimuth = defaults.azimuth;
-      camera.elevation = defaults.elevation;
-      camera.target = defaults.target;
-    }
-    camera.updatePosition();
+    this.target = vec3.add(this.target, pan);
+    this.position = vec3.add(this.position, pan);
+    this.updatePosition();
   }
-};
 
-function updateMatrix() {
-  aspect = canvas.clientWidth / canvas.clientHeight;
-  const proj = mat4.perspective(camera.fov, aspect, camera.near, camera.far);
-  const view = mat4.lookAt(camera.position, camera.target, camera.worldUp);
-  mat4.multiply(proj, view, uni.matrixValue);
+  zoom(delta) {
+    this.radius = ((delta + 1) * this.radius).clamp(this.near, this.far);
+    this.updatePosition();
+  }
 
-  uni.fValue.set([proj[5]]);
-  uni.sizeFactorValue.set([1 / sizeFactor]);
-  uni.cameraPosValue.set(camera.position);
+  adjFOV(delta) {
+    this.fov = (this.fov + delta).clamp(minFOV, maxFOV);
+    this.updatePosition();
+  }
+
+  adjFOVWithoutZoom(delta) {
+    const initial = Math.tan(this.fov / 2) * this.radius;
+    this.fov = (this.fov + delta).clamp(minFOV, maxFOV);
+    this.radius = initial / Math.tan(this.fov / 2);
+    this.updatePosition();
+  }
+
+  reset(e = { altKey: false, ctrlKey: false }) {
+    this.fov = defaults.fov;
+    if (!e.ctrlKey) this.radius = defaults.radius;
+    if (!e.altKey && !e.ctrlKey) {
+      this.azimuth = defaults.azimuth;
+      this.elevation = defaults.elevation;
+      this.target = vec3.clone(defaults.target);
+    }
+    this.updatePosition();
+  }
 }
+
 
 // camera interaction state
 let state = {

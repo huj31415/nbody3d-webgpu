@@ -11,7 +11,25 @@ let sizeFactor = window.outerHeight;
 
 const canvas = document.getElementById("canvas");
 
+let bodyBuffer, velBuffer, accelBuffer, nBodies;
+
 const uni = {};
+
+const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 1 size + 3 f,dt,g + 1 pad
+
+const kMatrixOffset = 0;
+const kCamPosOffset = 16;
+const kSizeFactorOffset = 19;
+const kFOffset = 20;
+const kDtOffset = 21;
+const kGOffset = 22;
+
+uni.matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
+uni.cameraPosValue = uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3);
+uni.sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 1);
+uni.fValue = uniformValues.subarray(kFOffset, kFOffset + 1);
+uni.dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
+uni.GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
 
 
 /**
@@ -104,8 +122,6 @@ function generateGalaxy(list) {
     camera.target = defaults.target = vec3.scale(CoM, 1 / totalMass);
   });
 
-  CoM
-
   return [new Float32Array(pos), new Float32Array(vel)];
 }
 
@@ -165,49 +181,35 @@ async function main() {
   //   new Float32Array([0,0,0,0, 0,.01,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])
   // ];
 
-  const kNumBodies = bodyData.length / 4;
+  nBodies = bodyData.length / 4;
 
   const accelData = new Float32Array(bodyData.length); // must use vec4f due to padding
 
-  const bodyBuffer = device.createBuffer({
+  bodyBuffer = device.createBuffer({
     label: "body buffer",
     size: bodyData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   device.queue.writeBuffer(bodyBuffer, 0, bodyData);
 
-  const velBuffer = device.createBuffer({
+  velBuffer = device.createBuffer({
     label: "velocity buffer",
     size: velData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   device.queue.writeBuffer(velBuffer, 0, velData);
 
-  const accelBuffer = device.createBuffer({
+  accelBuffer = device.createBuffer({
     label: "acceleration buffer",
     size: accelData.byteLength,
-    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   device.queue.writeBuffer(accelBuffer, 0, accelData);
 
-  const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 4 size,f,dt,g
   const uniformBuffer = device.createBuffer({
     size: uniformValues.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
   });
-  const kMatrixOffset = 0;
-  const kCamPosOffset = 16;
-  const kSizeFactorOffset = 19;
-  const kFOffset = 20;
-  const kDtOffset = 21;
-  const kGOffset = 22;
-
-  uni.matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
-  uni.cameraPosValue = uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3);
-  uni.sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffset + 1);
-  uni.fValue = uniformValues.subarray(kFOffset, kFOffset + 1);
-  uni.dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
-  uni.GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
 
   const uniformStruct = `
     struct Uniforms {
@@ -492,14 +494,14 @@ async function main() {
     const computePass = encoder.beginComputePass();
     computePass.setPipeline(computePipeline);
     computePass.setBindGroup(0, computeBindGroup);
-    computePass.dispatchWorkgroups(Math.ceil(kNumBodies / TILE_SIZE));
+    computePass.dispatchWorkgroups(Math.ceil(nBodies / TILE_SIZE));
     computePass.end();
 
     const renderPass = encoder.beginRenderPass(renderPassDescriptor);
     renderPass.setPipeline(renderPipeline);
     renderPass.setVertexBuffer(0, bodyBuffer);
     renderPass.setBindGroup(0, renderBindGroup);
-    renderPass.draw(6, kNumBodies);
+    renderPass.draw(6, nBodies);
     renderPass.end();
 
     const commandBuffer = encoder.finish();
@@ -509,7 +511,7 @@ async function main() {
 
     rafId = requestAnimationFrame(render);
   }
-  
+
   intId = setInterval(() => {
     ui.fps.textContent = fps.toFixed(1);
     ui.jsTime.textContent = jsTime.toFixed(2);
@@ -521,5 +523,7 @@ async function main() {
   rafId = requestAnimationFrame(render);
 
 }
+
+const camera = new Camera(defaults);
 
 main();
