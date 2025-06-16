@@ -1,7 +1,102 @@
+const uiIDs = [
+  "controls",
+  "toggleSettings",
+  "dt",
+  "dtValue",
+  "jsTime",
+  "frameTime",
+  "fps",
+  "camFOV",
+  "camDist",
+  "camTarget",
+  "camPos",
+  "camAlt",
+  "camAz",
+  "toggleSim",
+  "restartSim"
+];
+
+const ui = {};
+
+uiIDs.forEach((id) => ui[id] = document.getElementById(id));
+Object.freeze(ui);
+
+let oldDt;
+
+ui.dt.addEventListener("input", (event) => {
+  const val = parseFloat(event.target.value);
+  ui.dtValue.textContent = val.toFixed(2);
+  const newDt = 10 ** val;
+  if (oldDt) oldDt = newDt;
+  else dt = newDt;
+});
+
+ui.toggleSim.addEventListener("click", () => {
+  if (oldDt) {
+    dt = oldDt;
+    oldDt = null;
+  } else {
+    oldDt = dt;
+    dt = 0;
+  }
+});
+
+// requestAnimationFrame id, fps update id
+let rafId, intId;
+
+ui.restartSim.addEventListener("click", () => {
+  cancelAnimationFrame(rafId);
+  clearInterval(intId);
+  main();
+});
+
+ui.toggleSettings.addEventListener("click", () => {
+  ui.toggleSettings.innerText = ui.toggleSettings.innerText === ">" ? "<" : ">";
+  if (ui.controls.classList.contains("hidden")) {
+    ui.controls.classList.remove("hidden");
+    ui.toggleSettings.classList.remove("inactive");
+  } else {
+    ui.controls.classList.add("hidden");
+    ui.toggleSettings.classList.add("inactive");
+  }
+});
+
+// timing
+let jsTime = 0, lastFrameTime = performance.now(), deltaTime = 10, fps = 0;
+
+window.onresize = () => {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+  updateMatrix();
+};
 
 Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
 Number.prototype.toRad = function () { return this * Math.PI / 180; }
 Number.prototype.toDeg = function () { return this / Math.PI * 180; }
+
+const massToRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI));
+const randRange = (min, max) => Math.random() * (max - min) + min;
+const randMax = (max) => Math.random() * max;
+
+
+function createPoints({
+  numSamples,
+  radius,
+}) {
+  const vertices = [];
+  const increment = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < numSamples; ++i) {
+    const offset = 2 / numSamples;
+    const y = ((i * offset) - 1) + (offset / 2);
+    const r = Math.sqrt(1 - Math.pow(y, 2));
+    const phi = (i % numSamples) * increment;
+    const x = Math.cos(phi) * r;// * Math.random();
+    const z = Math.sin(phi) * r;// * Math.random();
+    vertices.push(x * radius, y * radius, z * radius, Math.random() * 2000);
+
+  }
+  return new Float32Array(vertices);
+}
 
 
 /*
@@ -82,6 +177,10 @@ class vec3 {
       out = this.scale(a, 1 / len);
     }
     return out;
+  }
+
+  static toString(a) {
+    return Array.prototype.slice.call(a).map((i) => parseFloat(i).toFixed(2));
   }
 }
 

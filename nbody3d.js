@@ -5,7 +5,7 @@ let adapter, device;
 const TILE_SIZE = 256;
 
 let G = 0.0001;
-let dt = 0.0001;
+let dt = 1e-4;
 
 let sizeFactor = window.outerHeight;
 
@@ -13,28 +13,6 @@ const canvas = document.getElementById("canvas");
 
 const uni = {};
 
-const massToRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI));
-const randRange = (min, max) => Math.random() * (max - min) + min;
-const randMax = (max) => Math.random() * max;
-
-function createPoints({
-  numSamples,
-  radius,
-}) {
-  const vertices = [];
-  const increment = Math.PI * (3 - Math.sqrt(5));
-  for (let i = 0; i < numSamples; ++i) {
-    const offset = 2 / numSamples;
-    const y = ((i * offset) - 1) + (offset / 2);
-    const r = Math.sqrt(1 - Math.pow(y, 2));
-    const phi = (i % numSamples) * increment;
-    const x = Math.cos(phi) * r;// * Math.random();
-    const z = Math.sin(phi) * r;// * Math.random();
-    vertices.push(x * radius, y * radius, z * radius, Math.random() * 2000);
-
-  }
-  return new Float32Array(vertices);
-}
 
 /**
  * Generates N random points distributed inside
@@ -62,10 +40,10 @@ function generateGalaxy(list) {
     const cMass = 1e7;
     const maxOuterMass = 100;
     const minOuterMass = 10;
-    const cRadius = (massToRadius(cMass) * 1.5 + massToRadius(maxOuterMass)) / sizeFactor;
+    const cRadius = (massToRadius(cMass) + massToRadius(maxOuterMass)) / sizeFactor;
     pos.push(...center);
     pos.push(cMass); // mass
-    vel.push(...centerV, massToRadius(cMass));
+    vel.push(...centerV, massToRadius(cMass) / 2);
 
     totalMass += cMass;
     vec3.add(CoM, vec3.scale(center, cMass), CoM);
@@ -157,19 +135,26 @@ async function main() {
     [
       [0, 0, 0],
       // [0, 0, 0],
-      [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
+      [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
       // [1, 1, 1],
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       20000
     ],
     [
-      [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
-      [randRange(-5,5), randRange(-5,5), randRange(-5,5)],
+      [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
+      [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
-      10000
+      20000
     ],
+    // [
+    //   [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
+    //   [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
+    //   [Math.random(), Math.random(), Math.random()],
+    //   2 * Math.random() + 2,
+    //   20000
+    // ],
   ]);
   // createPoints({
   //   radius: 1,
@@ -464,8 +449,14 @@ async function main() {
   };
 
   let depthTexture;
+  const filterStrength = 10;
 
-  function render(time) {
+  function render() {
+    const startTime = performance.now();
+    deltaTime += (startTime - lastFrameTime - deltaTime) / filterStrength;
+    fps += (1e3 / deltaTime - fps) / filterStrength;
+    lastFrameTime = startTime;
+
     if (keyOrbit) camera.orbit((orbleft - orbright) * KEY_ROT_SPEED, (orbup - orbdown) * KEY_ROT_SPEED);
     if (keyPan) camera.pan((panleft - panright) * KEY_PAN_SPEED, (panup - pandown) * KEY_PAN_SPEED);
     if (keyZoom) camera.zoom((zoomout - zoomin) * KEY_ZOOM_SPEED);
@@ -514,19 +505,21 @@ async function main() {
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
 
-    requestAnimationFrame(render);
+    jsTime += (performance.now() - startTime - jsTime) / filterStrength;
+
+    rafId = requestAnimationFrame(render);
   }
+  
+  intId = setInterval(() => {
+    ui.fps.textContent = fps.toFixed(1);
+    ui.jsTime.textContent = jsTime.toFixed(2);
+    ui.frameTime.textContent = deltaTime.toFixed(1);
+    // ui.gpuTime.textContent = deltaTime - jsTime;
+  }, 100);
 
-  window.onresize = () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    uni.sizeFactorValue.set([1 / sizeFactor]);
-    updateMatrix();
-  };
+  camera.updatePosition();
+  rafId = requestAnimationFrame(render);
 
-  updateCameraPosition();
-  uni.sizeFactorValue.set([1 / sizeFactor]);
-  requestAnimationFrame(render);
 }
 
 main();

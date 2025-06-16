@@ -25,7 +25,7 @@ input[type="range"],
 input[type="number"],
 input[type="text"],
 input[type="file"] {
-  margin: 3px;
+  margin: 1px;
 }
 
 input[type="number"],
@@ -42,14 +42,14 @@ select {
   appearance: auto;
   display: inline-block;
   width: 140px;
-  margin: 3px;
+  margin: 1px;
   padding: 2px;
 }
 
 .halfWidth {
   display: inline-block;
   width: 140px;
-  margin: 2px;
+  /* margin: 2px; */
   /* border: 1px solid #d8d7d5; */
 }
 
@@ -97,6 +97,9 @@ h2 {
   margin-block: 1em;
 }
 
+.control-group {
+  padding: 2px;
+}
 .control-group>* {
   margin-top: 5px;
 }
