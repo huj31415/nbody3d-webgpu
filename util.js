@@ -271,7 +271,7 @@ class vec3 {
   }
 
   static toString(a) {
-    return Array.prototype.slice.call(a).map((i) => parseFloat(i).toFixed(2));
+    return Array.from(a).map((i) => parseFloat(i).toFixed(2));
   }
 }
 
