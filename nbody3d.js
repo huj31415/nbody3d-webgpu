@@ -491,11 +491,13 @@ async function main() {
 
     const encoder = device.createCommandEncoder();
 
-    const computePass = encoder.beginComputePass();
-    computePass.setPipeline(computePipeline);
-    computePass.setBindGroup(0, computeBindGroup);
-    computePass.dispatchWorkgroups(Math.ceil(nBodies / TILE_SIZE));
-    computePass.end();
+    if (dt > 0) {
+      const computePass = encoder.beginComputePass();
+      computePass.setPipeline(computePipeline);
+      computePass.setBindGroup(0, computeBindGroup);
+      computePass.dispatchWorkgroups(Math.ceil(nBodies / TILE_SIZE));
+      computePass.end();
+    }
 
     const renderPass = encoder.beginRenderPass(renderPassDescriptor);
     renderPass.setPipeline(renderPipeline);

@@ -101,52 +101,61 @@ function createPoints({
   return new Float32Array(vertices);
 }
 
-async function exportBuffers(device, bodyBuffer, velBuffer, accelBuffer, count) {
-  const buffers = [bodyBuffer, velBuffer, accelBuffer];
-  const bufferNames = ["bodies", "vel", "accel"];
-  const floatSize = 4;
-  const vec4Size = 4 * floatSize;
-  const totalBytes = count * vec4Size;
+async function exportSimulation(device, buffers, camera) {
+  const [bodyBuffer, velBuffer, accelBuffer] = buffers;
 
-  const readBuffers = await Promise.all(buffers.map(async (gpuBuffer, i) => {
-    // Create staging buffer
-    const stagingBuffer = device.createBuffer({
-      size: totalBytes,
+  async function readBuffer(buffer) {
+    const size = buffer.size ?? buffer.getMappedRange().byteLength;
+    const readBuffer = device.createBuffer({
+      size,
       usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
     });
 
-    // Copy GPU buffer to staging buffer
-    const encoder = device.createCommandEncoder();
-    encoder.copyBufferToBuffer(gpuBuffer, 0, stagingBuffer, 0, totalBytes);
-    device.queue.submit([encoder.finish()]);
+    const commandEncoder = device.createCommandEncoder();
+    commandEncoder.copyBufferToBuffer(buffer, 0, readBuffer, 0, size);
+    device.queue.submit([commandEncoder.finish()]);
 
-    // Wait for it to be ready
-    await stagingBuffer.mapAsync(GPUMapMode.READ);
-    const arrayBuffer = stagingBuffer.getMappedRange();
-    const data = new Float32Array(arrayBuffer.slice(0));
-    stagingBuffer.unmap();
-
-    return { name: bufferNames[i], data };
-  }));
-
-  // Format as JSON
-  const output = {};
-  for (const { name, data } of readBuffers) {
-    output[name] = Array.from(data);
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const copy = readBuffer.getMappedRange().slice(0); // clone
+    readBuffer.unmap();
+    return new Float32Array(copy);
   }
 
-  const blob = new Blob([JSON.stringify(output)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+  const [bodies, velocities, accelerations] = await Promise.all([
+    readBuffer(bodyBuffer),
+    readBuffer(velBuffer),
+    readBuffer(accelBuffer),
+  ]);
+
+  const exportData = {
+    bodies: Array.from(bodies),
+    vel: Array.from(velocities),
+    accel: Array.from(accelerations),
+    camera: {
+      target: Array.from(camera.target),
+      position: Array.from(camera.position),
+      radius: camera.radius,
+      azimuth: camera.azimuth,
+      elevation: camera.elevation,
+      fov: camera.fov,
+      near: camera.near,
+      far: camera.far,
+    },
+  };
+
+  const blob = new Blob([JSON.stringify(exportData)], { type: "application/json" });
   const a = document.createElement("a");
-  a.href = url;
-  a.download = "simulation_data.json";
+  a.href = URL.createObjectURL(blob);
+  a.download = "simulation_export.json";
   a.click();
-  URL.revokeObjectURL(url);
 }
 
-async function importBuffers(device, file, bodyBuffer, velBuffer, accelBuffer) {
+async function importSimulation(device, file, bufferArray, camera) {
+  if (!file) return;
   const text = await file.text();
   const json = JSON.parse(text);
+
+  const [bodyBuffer, velBuffer, accelBuffer] = bufferArray;
 
   const buffers = [
     { name: "bodies", gpu: bodyBuffer },
@@ -169,16 +178,32 @@ async function importBuffers(device, file, bodyBuffer, velBuffer, accelBuffer) {
     encoder.copyBufferToBuffer(upload, 0, gpu, 0, data.byteLength);
     device.queue.submit([encoder.finish()]);
   }
+
+  // Apply camera state
+  if (json.camera) {
+    camera.target = vec3.fromValues(...json.camera.target);
+    camera.position = vec3.fromValues(...json.camera.position);
+    camera.radius = json.camera.radius;
+    camera.azimuth = json.camera.azimuth;
+    camera.elevation = json.camera.elevation;
+    camera.fov = json.camera.fov;
+    camera.near = json.camera.near;
+    camera.far = json.camera.far;
+
+    camera.updatePosition();
+  }
 }
 
-ui.export.addEventListener("click", () => exportBuffers(device, bodyBuffer, velBuffer, accelBuffer, nBodies));
+
+ui.export.addEventListener("click", () => exportSimulation(device, [bodyBuffer, velBuffer, accelBuffer], camera));
 
 ui.import.addEventListener("click", () => {
   const file = ui.bufferInput.files[0];
-  if (file) importBuffers(device, file, bodyBuffer, velBuffer, accelBuffer);
-  ui.bufferInput.value = null;
-  defaults.target = vec3.fromValues(0,0,0);
-  camera.reset();
+  if (file) {
+    importSimulation(device, file, [bodyBuffer, velBuffer, accelBuffer], camera);
+    ui.bufferInput.value = null;
+    camera.reset();
+  }
 });
 
 
