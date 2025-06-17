@@ -11,7 +11,8 @@ let sizeFactor = window.outerHeight;
 
 const canvas = document.getElementById("canvas");
 
-let bodyBuffer, velBuffer, accelBuffer, nBodies;
+let bodyBuffer, velBuffer, accelBuffer
+let nBodies = 0;
 
 const uni = {};
 
@@ -53,7 +54,6 @@ function generateGalaxy(list) {
   const vel = [];
   const CoM = vec3.create();
   let totalMass = 0;
-  let nBodies = 0;
 
   list.forEach(config => {
     const [center, centerV, normal, radius, count] = config;
@@ -61,7 +61,7 @@ function generateGalaxy(list) {
     nBodies += (count + 1);
 
     const cMass = 1e7;
-    const maxOuterMass = 100;
+    const maxOuterMass = 50;
     const minOuterMass = 10;
     const cRadius = (massToRadius(cMass) + massToRadius(maxOuterMass)) / sizeFactor;
     pos.push(...center);
@@ -163,6 +163,8 @@ async function main() {
     format: swapChainFormat,
   });
 
+  nBodies = 0;
+
   const [bodyData, velData] = generateGalaxy([
     [
       [0, 0, 0],
@@ -188,30 +190,27 @@ async function main() {
     // ],
   ]);
 
-  nBodies = bodyData.length / 4;
-
-  const accelData = new Float32Array(bodyData.length); // must use vec4f due to padding
+  const bufferSize = bodyData.byteLength;
 
   bodyBuffer = device.createBuffer({
     label: "body buffer",
-    size: bodyData.byteLength,
+    size: bufferSize,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   device.queue.writeBuffer(bodyBuffer, 0, bodyData);
 
   velBuffer = device.createBuffer({
     label: "velocity buffer",
-    size: velData.byteLength,
+    size: bufferSize,
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
   device.queue.writeBuffer(velBuffer, 0, velData);
 
   accelBuffer = device.createBuffer({
     label: "acceleration buffer",
-    size: accelData.byteLength,
+    size: bufferSize, // same size as velBuffer
     usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
   });
-  device.queue.writeBuffer(accelBuffer, 0, accelData);
 
   const uniformBuffer = device.createBuffer({
     size: uniformValues.byteLength,
@@ -395,17 +394,6 @@ async function main() {
     label: "render module"
   });
 
-  // const renderBindGroupLayout = device.createBindGroupLayout({
-  //   entries: [
-  //     { binding: 0, visibility: GPUShaderStage.VERTEX, buffer: { type: "read-only-storage" } },
-  //     { binding: 1, visibility: GPUShaderStage.VERTEX, buffer: { type: "uniform" } },
-  //   ],
-  // });
-
-  // const renderPipelineLayout = device.createPipelineLayout({
-  //   bindGroupLayouts: [renderBindGroupLayout],
-  // });
-
   const renderPipeline = device.createRenderPipeline({
     label: '3d point renderer',
     layout: 'auto', // renderPipelineLayout,
@@ -428,7 +416,7 @@ async function main() {
   });
 
   const renderBindGroup = device.createBindGroup({
-    layout: renderPipeline.getBindGroupLayout(0), // renderBindGroupLayout, 
+    layout: renderPipeline.getBindGroupLayout(0),
     entries: [ // swith accel/vel buffer for different visualization
       { binding: 0, resource: { buffer: bodyBuffer } },
       { binding: 1, resource: { buffer: velBuffer } },
