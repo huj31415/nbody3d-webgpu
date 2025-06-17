@@ -3,6 +3,8 @@ const uiIDs = [
   "toggleSettings",
   "dt",
   "dtValue",
+  "G",
+  "GValue",
   "jsTime",
   "frameTime",
   "fps",
@@ -32,6 +34,16 @@ ui.dt.addEventListener("input", (event) => {
   const newDt = 10 ** val;
   if (oldDt) oldDt = newDt;
   else dt = newDt;
+
+  uni.dtValue.set([dt]);
+});
+
+ui.G.addEventListener("input", (event) => {
+  const val = parseFloat(event.target.value);
+  ui.GValue.textContent = val.toFixed(2);
+  G = 10 ** val;
+  
+  uni.GValue.set([G]);
 });
 
 ui.toggleSim.addEventListener("click", () => {
@@ -73,11 +85,39 @@ window.onresize = () => {
   camera.updateMatrix();
 };
 
+/**
+ * Clamps a number between between specified values
+ * @param {Number} min Lower bound to clamp
+ * @param {Number} max Upper bound to clamp
+ * @returns Original number clamped between min and max
+ */
 Number.prototype.clamp = function (min, max) { return Math.max(min, Math.min(max, this)) };
+
+/**
+ * Converts degrees to radians
+ * @returns Degree value in radians
+ */
 Number.prototype.toRad = function () { return this * Math.PI / 180; }
+
+/**
+ * Converts radians to degrees
+ * @returns Radian value in degrees
+ */
 Number.prototype.toDeg = function () { return this / Math.PI * 180; }
 
+/**
+ * Converts mass to radius at density 1
+ * @param {Number} mass Mass of body
+ * @returns Radius of the body
+ */
 const massToRadius = (mass) => Math.cbrt(mass / (4 / 3 * Math.PI));
+
+/**
+ * Generates a random number within a range
+ * @param {Number} min Lower bound, inclusive
+ * @param {Number} max Upper bound, exclusive
+ * @returns Random number between [min, max)
+ */
 const randRange = (min, max) => Math.random() * (max - min) + min;
 const randMax = (max) => Math.random() * max;
 
@@ -101,6 +141,12 @@ function createPoints({
   return new Float32Array(vertices);
 }
 
+/**
+ * Exports simulation and camera state to json
+ * @param {device} device GPU device
+ * @param {Array<GPUBuffer>} buffers Array containing bodyBuffer, velBuffer, accelBuffer to export
+ * @param {Camera} camera Camera to export settings
+ */
 async function exportSimulation(device, buffers, camera) {
   const [bodyBuffer, velBuffer, accelBuffer] = buffers;
 
@@ -141,6 +187,7 @@ async function exportSimulation(device, buffers, camera) {
       near: camera.near,
       far: camera.far,
     },
+    G: parseFloat(ui.G.value).toFixed(2)
   };
 
   const blob = new Blob([JSON.stringify(exportData)], { type: "application/json" });
@@ -150,6 +197,13 @@ async function exportSimulation(device, buffers, camera) {
   a.click();
 }
 
+/**
+ * Imports simulation data from json to buffers
+ * @param {GPUDevice} device GPU device
+ * @param {File} file JSON file to read data from
+ * @param {Array<GPUBuffer>} bufferArray Array containing bodyBuffer, velBuffer, accelBuffer to import to
+ * @param {Camera} camera Camera to import settings to
+ */
 async function importSimulation(device, file, bufferArray, camera) {
   if (!file) return;
   const text = await file.text();
@@ -192,8 +246,11 @@ async function importSimulation(device, file, bufferArray, camera) {
 
     camera.updatePosition();
   }
+  if (json.G) {
+    ui.GValue.textContent = ui.G.value = json.G;
+    G = 10 ** json.G;
+  }
 }
-
 
 ui.export.addEventListener("click", () => exportSimulation(device, [bodyBuffer, velBuffer, accelBuffer], camera));
 
