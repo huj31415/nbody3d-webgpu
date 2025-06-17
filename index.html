@@ -14,10 +14,22 @@
   <div id="controls" class="right-dark">
     <h2>3D n-body on WebGPU</h2>
     <div class="control-group">
-      FPS: <span id="fps"></span>
-      Frame time: <span id="frameTime"></span> ms
+      <b>Performance</b>
       <br>
-      JS time: <span id="jsTime"></span> ms
+      <span class="halfWidth">
+        FPS: <span id="fps"></span>
+        <br>
+        Frame: <span id="frameTime"></span> ms
+        <br>
+        JS: <span id="jsTime"></span> ms
+      </span>
+      <span class="halfWidth">
+        Compute: <span id="computeTime"></span> ms
+        <br>
+        Render: <span id="renderTime"></span> ms
+        <br>
+        Particles: <span id="nBodies"></span>
+      </span>
     </div>
     <hr>
     <div class="control-group">
@@ -73,7 +85,7 @@
     </div>
     <hr>
     <div class="control-group">
-      <b>Camera controls:</b>
+      <b>Camera controls</b>
       <div>
         Orbit: leftclick / arrows
         <br>

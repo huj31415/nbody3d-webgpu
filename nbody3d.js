@@ -15,7 +15,7 @@ let bodyBuffer, velBuffer, accelBuffer, nBodies;
 
 const uni = {};
 
-const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 1 size + 3 f,dt,g + 1 pad
+const uniformValues = new Float32Array(24); // 16 mat + 3 camPos + 1 size + 4 f,dt,g,nBodies
 
 const kMatrixOffset = 0;
 const kCamPosOffset = 16;
@@ -23,6 +23,7 @@ const kSizeFactorOffset = 19;
 const kFOffset = 20;
 const kDtOffset = 21;
 const kGOffset = 22;
+const kNBodiesOffset = 23;
 
 uni.matrixValue = uniformValues.subarray(kMatrixOffset, kMatrixOffset + 16);
 uni.cameraPosValue = uniformValues.subarray(kCamPosOffset, kCamPosOffset + 3);
@@ -30,6 +31,7 @@ uni.sizeFactorValue = uniformValues.subarray(kSizeFactorOffset, kSizeFactorOffse
 uni.fValue = uniformValues.subarray(kFOffset, kFOffset + 1);
 uni.dtValue = uniformValues.subarray(kDtOffset, kDtOffset + 1);
 uni.GValue = uniformValues.subarray(kGOffset, kGOffset + 1);
+uni.nBodies = uniformValues.subarray(kNBodiesOffset, kNBodiesOffset + 1);
 
 
 /**
@@ -51,9 +53,12 @@ function generateGalaxy(list) {
   const vel = [];
   const CoM = vec3.create();
   let totalMass = 0;
+  let nBodies = 0;
 
   list.forEach(config => {
     const [center, centerV, normal, radius, count] = config;
+
+    nBodies += (count + 1);
 
     const cMass = 1e7;
     const maxOuterMass = 100;
@@ -61,7 +66,7 @@ function generateGalaxy(list) {
     const cRadius = (massToRadius(cMass) + massToRadius(maxOuterMass)) / sizeFactor;
     pos.push(...center);
     pos.push(cMass); // mass
-    vel.push(...centerV, massToRadius(cMass) / 2);
+    vel.push(...centerV, 0);
 
     totalMass += cMass;
     vec3.add(CoM, vec3.scale(center, cMass), CoM);
@@ -116,11 +121,14 @@ function generateGalaxy(list) {
       const uVel = vec3.scale(u, tangentX);
       const vVel = vec3.scale(v, tangentY);
 
-      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), massToRadius(mass));
+      vel.push(...vec3.add(centerV, vec3.add(uVel, vVel)), 0);
       // vel.push(0, 0, 0, 0);
     }
     camera.target = defaults.target = vec3.scale(CoM, 1 / totalMass);
   });
+
+  uni.nBodies.set([nBodies]);
+  ui.nBodies.textContent = nBodies;
 
   return [new Float32Array(pos), new Float32Array(vel)];
 }
@@ -133,7 +141,15 @@ async function main() {
   canvas.height = window.innerHeight;
   if (!adapter) {
     adapter = await navigator.gpu?.requestAdapter();
-    device = await adapter?.requestDevice();
+    device = await adapter?.requestDevice({
+      requiredFeatures: [
+        (adapter.features.has("timestamp-query") ? "timestamp-query" : ""),
+      ],
+      requiredLimits: {
+        maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
+        maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup
+      }
+    });
   }
   if (!device) {
     alert("Browser does not support WebGPU");
@@ -141,7 +157,7 @@ async function main() {
     return;
   }
   const context = canvas.getContext("webgpu");
-  const swapChainFormat = "bgra8unorm";
+  const swapChainFormat = navigator.gpu.getPreferredCanvasFormat();
   context.configure({
     device: device,
     format: swapChainFormat,
@@ -151,15 +167,14 @@ async function main() {
     [
       [0, 0, 0],
       // [0, 0, 0],
-      [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
-      // [1, 1, 1],
+      [randRange(-10, 10), randRange(-10, 10), randRange(-10, 10)],
       [Math.random(), Math.random(), Math.random()],
-      2 * Math.random() + 2,
+      2 * (2 * Math.random() + 2),
       20000
     ],
     [
       [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
-      [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
+      [randRange(-10, 10), randRange(-10, 10), randRange(-10, 10)],
       [Math.random(), Math.random(), Math.random()],
       2 * Math.random() + 2,
       20000
@@ -172,14 +187,6 @@ async function main() {
     //   20000
     // ],
   ]);
-  // createPoints({
-  //   radius: 1,
-  //   numSamples: 1000,
-  // });
-  // const [bodyData, velData] = [
-  //   new Float32Array([0,0,0,1000, 1,1,1,1000, 1,0,0,1000, 0,1,0,1000, 0,0,1,1000, 1,1,0,1000, 1,0,1,1000, 0,1,1,1000]),
-  //   new Float32Array([0,0,0,0, 0,.01,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0, 0,0,0,0])
-  // ];
 
   nBodies = bodyData.length / 4;
 
@@ -219,6 +226,7 @@ async function main() {
       f: f32,
       dt: f32,
       G: f32,
+      nBodies: f32
     };
   `;
 
@@ -247,12 +255,10 @@ async function main() {
       @compute @workgroup_size(TILE_SIZE)
       fn main(
         @builtin(global_invocation_id) gid: vec3u,
-        @builtin(local_invocation_id) lid: vec3u,
-        @builtin(workgroup_id) wid: vec3u
+        @builtin(local_invocation_id) lid: vec3u
       ) {
         let bodyIndex = gid.x;
-        let nBodies = arrayLength(&bodies);
-        let isBody = bodyIndex < nBodies;
+        let nBodies = u32(uni.nBodies);
         let body = bodies[bodyIndex];
 
         // number of tiles rounded up
@@ -261,17 +267,17 @@ async function main() {
         var newAccel = vec3f(0);
 
         // iterate across tiles and accumulate acceleration
-        for (var t = 0u; t < nTiles; t++) {
-          let index = t * TILE_SIZE + lid.x;
+        for (var tileIndex = 0u; tileIndex < nBodies; tileIndex += TILE_SIZE) {
+          let index = tileIndex + lid.x;
           if (index < nBodies) { tile[lid.x] = bodies[index]; }
 
           // sync tile loading
           workgroupBarrier();
 
-          // iterate within tile, unroll
+          // iterate within tile
           for (var i = 0u; i < TILE_SIZE; i++) {
-            let index2 = t * TILE_SIZE + i;
-            if (index2 <= nBodies && index2 != bodyIndex) {
+            let index2 = tileIndex + i;
+            if (index2 < nBodies && index2 != bodyIndex) {
               newAccel += bodyAccel(body, tile[i]);
             }
           }
@@ -280,13 +286,12 @@ async function main() {
           workgroupBarrier();
         }
         
-        
-        // if (bodyIndex < nBodies) {
         let vec4accel = vec4f(newAccel, 0);
 
         // velocity verlet with frame shift
-        vel[bodyIndex] += 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
-        bodies[bodyIndex] += uni.dt * (vel[bodyIndex] + 0.5 * vec4accel * uni.dt); // use old accel?
+        let newVel = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
+        vel[bodyIndex] = newVel;
+        bodies[bodyIndex] = body + uni.dt * (newVel + 0.5 * vec4accel * uni.dt);
 
         // euler
         // vel[bodyIndex] += vec4accel * uni.dt;
@@ -294,7 +299,6 @@ async function main() {
 
         // save acceleration for the next time step
         accel[bodyIndex] = vec4accel;
-        // }
       }
     `,
     label: "compute module"
@@ -348,21 +352,21 @@ async function main() {
         );
         let uv = quad[vNdx];
 
-        //get radius from mass (r = cbrt(mass * 3/4 / pi))
-        let radius = vel[instNdx].w; //pow(body.w / 4.189, 1.0/3.0);
+        // get radius from mass (r = cbrt(mass * 3/4 / pi))
+        // let radius = vel[instNdx].w;
+        let radius = pow(body.w / 4.189, 1.0/3.0);
         
         let worldPos = body.xyz;
 
         // compute view vector from camera to particle
         let viewVec = worldPos - uni.cameraPos;
-        let viewDir = normalize(viewVec);
 
         // compute billboard basis
-        let right = normalize(cross(viewDir, vec3f(0.0, 1.0, 0.0)));
-        let up = normalize(cross(right, viewDir));
+        let right = normalize(cross(viewVec, vec3f(0.0, 1.0, 0.0)));
+        let up = normalize(cross(right, viewVec));
 
         // offset in local camera-facing plane
-        let worldOffset = (right * uv.x + up * uv.y) * max(radius, 2 * length(viewVec) / uni.f) * uni.sizeRatio;
+        let worldOffset = fma(right, vec3f(uv.x), up * uv.y) * max(radius, 2 * length(viewVec) / uni.f) * uni.sizeRatio;
         // let worldOffset = (right * uv.x + up * uv.y) * radius * uni.sizeRatio;
 
         // final world position of the quad vertex
@@ -383,11 +387,9 @@ async function main() {
         // circle SDF
         let dist = length(vsOut.uv) - 1;
         if (dist > 0.0) { discard; }
-        // if (dist > -0.5 / vel[vsOut.index].w) { return vec4f(0); } // black border around circles
-        // return vec4f(colorMap(vsOut.position.w), 1); // color by distance to camera
 
         return vec4f(colorMap(length(vel[vsOut.index].xyz) / 40f), 1); // color by magnitude
-        // return vec4f(normalize(vel[vsOut.index].xyz) / 2 + vec3f(0.5), 1); // color by direction
+        // return vec4f(fma(normalize(vel[vsOut.index].xyz), 0.5, vec3f(0.5)), 1); // color by direction
       }
     `,
     label: "render module"
@@ -453,6 +455,9 @@ async function main() {
   let depthTexture;
   const filterStrength = 10;
 
+  const computeTimingHelper = new TimingHelper(device);
+  const renderTimingHelper = new TimingHelper(device);
+
   function render() {
     const startTime = performance.now();
     deltaTime += (startTime - lastFrameTime - deltaTime) / filterStrength;
@@ -484,22 +489,19 @@ async function main() {
     }
     renderPassDescriptor.depthStencilAttachment.view = depthTexture.createView();
 
-    uni.GValue.set([G]);
-    uni.dtValue.set([dt]);
-
     device.queue.writeBuffer(uniformBuffer, 0, uniformValues);
 
     const encoder = device.createCommandEncoder();
 
     if (dt > 0) {
-      const computePass = encoder.beginComputePass();
+      const computePass = computeTimingHelper.beginComputePass(encoder);
       computePass.setPipeline(computePipeline);
       computePass.setBindGroup(0, computeBindGroup);
       computePass.dispatchWorkgroups(Math.ceil(nBodies / TILE_SIZE));
       computePass.end();
     }
 
-    const renderPass = encoder.beginRenderPass(renderPassDescriptor);
+    const renderPass = renderTimingHelper.beginRenderPass(encoder, renderPassDescriptor);
     renderPass.setPipeline(renderPipeline);
     renderPass.setVertexBuffer(0, bodyBuffer);
     renderPass.setBindGroup(0, renderBindGroup);
@@ -508,6 +510,17 @@ async function main() {
 
     const commandBuffer = encoder.finish();
     device.queue.submit([commandBuffer]);
+
+    if (dt > 0) {
+      computeTimingHelper.getResult().then(gpuTime => {
+        computeTime += (gpuTime / 1e6 - computeTime) / filterStrength;
+      });
+    } else {
+      computeTime = 0;
+    }
+    renderTimingHelper.getResult().then(gpuTime => {
+      renderTime += (gpuTime / 1e6 - renderTime) / filterStrength;
+    });
 
     jsTime += (performance.now() - startTime - jsTime) / filterStrength;
 
@@ -518,12 +531,15 @@ async function main() {
     ui.fps.textContent = fps.toFixed(1);
     ui.jsTime.textContent = jsTime.toFixed(2);
     ui.frameTime.textContent = deltaTime.toFixed(1);
-    // ui.gpuTime.textContent = deltaTime - jsTime;
+    ui.computeTime.textContent = computeTime.toFixed(3);
+    ui.renderTime.textContent = renderTime.toFixed(3);
   }, 100);
 
+  uni.GValue.set([G]);
+  uni.dtValue.set([dt]);
   camera.updatePosition();
-  rafId = requestAnimationFrame(render);
 
+  rafId = requestAnimationFrame(render);
 }
 
 const camera = new Camera(defaults);
