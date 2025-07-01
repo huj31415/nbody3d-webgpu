@@ -9,12 +9,13 @@
 
 <body>
   <canvas id="canvas"></canvas>
-  <!-- undo hide when ready -->
   <button id="toggleSettings">&gt;</button>
   <div id="controls" class="right-dark">
     <h2>3D n-body on WebGPU</h2>
     <div class="control-group">
       <b>Performance</b>
+      <br>
+      Resolution: <span id="res"></span>
       <br>
       <span class="halfWidth">
         FPS: <span id="fps"></span>
@@ -105,6 +106,7 @@
     <p></p>
   </div>
   <script src="./util.js"></script>
+  <script src="./matrix.js"></script>
   <script src="./camera.js"></script>
   <script src="./nbody3d.js"></script>
 </body>

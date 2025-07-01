@@ -137,8 +137,6 @@ function generateGalaxy(list) {
 async function main() {
 
   // WebGPU Setup
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
   if (!adapter) {
     adapter = await navigator.gpu?.requestAdapter();
     device = await adapter?.requestDevice({
@@ -171,7 +169,7 @@ async function main() {
       // [0, 0, 0],
       [randRange(-10, 10), randRange(-10, 10), randRange(-10, 10)],
       [Math.random(), Math.random(), Math.random()],
-      2 * (2 * Math.random() + 2),
+      2 * Math.random() + 2,
       20000
     ],
     [
@@ -286,11 +284,15 @@ async function main() {
         }
         
         let vec4accel = vec4f(newAccel, 0);
+        let vec4dt = vec4f(uni.dt);
+        let vec4halfDt = vec4dt * 0.5;
 
         // velocity verlet with frame shift
-        let newVel = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
+        // let newVel = vel[bodyIndex] + 0.5 * (accel[bodyIndex] + vec4accel) * uni.dt;
+        let newVel = fma(accel[bodyIndex] + vec4accel, vec4halfDt, vel[bodyIndex]);
         vel[bodyIndex] = newVel;
-        bodies[bodyIndex] = body + uni.dt * (newVel + 0.5 * vec4accel * uni.dt);
+        // bodies[bodyIndex] = body + uni.dt * (newVel + 0.5 * vec4accel * uni.dt);
+        bodies[bodyIndex] = fma(fma(vec4halfDt, vec4accel, newVel), vec4dt, body);
 
         // euler
         // vel[bodyIndex] += vec4accel * uni.dt;
