@@ -1,5 +1,4 @@
-// point renderer from webgpufundamentals, added camera controls
-
+// point renderer based on example from webgpufundamentals
 let adapter, device;
 
 const TILE_SIZE = 256;
@@ -11,7 +10,7 @@ let sizeFactor = window.outerHeight;
 
 const canvas = document.getElementById("canvas");
 
-let bodyBuffer, velBuffer, accelBuffer
+let bodyBuffer, velBuffer, accelBuffer;
 let nBodies = 0;
 
 const uni = {};

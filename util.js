@@ -69,6 +69,8 @@ let rafId, intId;
 ui.restartSim.addEventListener("click", () => {
   cancelAnimationFrame(rafId);
   clearInterval(intId);
+  device.destroy();
+  adapter = null;
   main();
 });
 
