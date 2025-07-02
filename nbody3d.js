@@ -163,30 +163,19 @@ async function main() {
 
   nBodies = 0;
 
-  const [bodyData, velData] = generateGalaxy([
-    [
-      [0, 0, 0],
-      // [0, 0, 0],
-      [randRange(-10, 10), randRange(-10, 10), randRange(-10, 10)],
-      [Math.random(), Math.random(), Math.random()],
-      2 * Math.random() + 2,
-      20000
-    ],
-    [
+  let galaxySettings = [];
+  
+  for (let i = 0; i < ui.numGalaxies.value; i++) {
+    galaxySettings.push([
       [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
       [randRange(-10, 10), randRange(-10, 10), randRange(-10, 10)],
       [Math.random(), Math.random(), Math.random()],
-      2 * Math.random() + 2,
-      20000
-    ],
-    // [
-    //   [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
-    //   [randRange(-5, 5), randRange(-5, 5), randRange(-5, 5)],
-    //   [Math.random(), Math.random(), Math.random()],
-    //   2 * Math.random() + 2,
-    //   20000
-    // ],
-  ]);
+      randRange(2, 5),
+      Math.round(randRange(ui.minBodies.value, ui.maxBodies.value))
+    ]);
+  }
+
+  const [bodyData, velData] = generateGalaxy(galaxySettings);
 
   const bufferSize = bodyData.byteLength;
 

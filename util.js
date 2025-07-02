@@ -22,7 +22,10 @@ const uiIDs = [
   "restartSim",
   "export",
   "import",
-  "bufferInput"
+  "bufferInput",
+  "minBodies",
+  "maxBodies",
+  "numGalaxies",
 ];
 
 const ui = {};

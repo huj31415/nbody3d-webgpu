@@ -60,13 +60,19 @@
         <label for="dt">dt: 10^<span id="dtValue">-4.00</span>
         </label>
         <br>
-        <!-- <input id="simSpeed" type="range" min="0" max="100" step="1" value="10">
-        <label for="simSpeed">dt/frame:
-          <span id="simSpeedValue">10</span>
-        </label> -->
         <input id="G" type="range" min="-6" max="0" step="0.01" value="-4">
         <label for="G">G: 10^<span id="GValue">-4.00</span>
         </label>
+      </div>
+      <div>
+        <input id="minBodies" type="number" min="1000" max="50000" value="20000">
+        <label for="minBodies">Min bodies/galaxy</label>
+        <br>
+        <input id="maxBodies" type="number" min="1001" max="50000" value="20000">
+        <label for="maxBodies">Max bodies/galaxy</label>
+        <br>
+        <input id="numGalaxies" type="number" min="1" max="10" value="2">
+        <label for="numGalaxies">Number of galaxies</label>
       </div>
       <div>
         <button id="toggleSim">Play / Pause</button>
