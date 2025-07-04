@@ -136,7 +136,7 @@ function generateGalaxy(list) {
 async function main() {
 
   // WebGPU Setup
-  if (!adapter) {
+  if (!device) {
     adapter = await navigator.gpu?.requestAdapter();
     device = await adapter?.requestDevice({
       requiredFeatures: [

@@ -70,7 +70,7 @@ ui.restartSim.addEventListener("click", () => {
   cancelAnimationFrame(rafId);
   clearInterval(intId);
   device.destroy();
-  adapter = null;
+  device = null;
   main();
 });
 
