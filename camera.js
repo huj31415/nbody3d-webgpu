@@ -188,8 +188,8 @@ let zoomin = false, zoomout = false;
 let keyOrbit = false, keyPan = false, keyZoom = false, keyFOV = false, keyFOVWithoutZoom = false;
 
 function keyCamera(e, val) {
-  if (["w", "a", "s", "d", "f", "c"].includes(e.key) || e.key.includes("Arrow"))
-    e.preventDefault();
+  if ((["w", "a", "s", "d", "f", "c"].includes(e.key) || e.key.includes("Arrow")) && e.target.tagName !== "INPUT") e.preventDefault();
+  else return;
 
   switch (e.key) {
     case "ArrowUp":
